@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# eval outputs
+evals/results/*
+!evals/results/.gitkeep
+rotguard.md

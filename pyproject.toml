@@ -1,0 +1,56 @@
+[project]
+name = "rotguard"
+version = "0.0.0"
+description = "Measure and guard against context rot in LLM agents (context rot, compaction, LangChain)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "logquill>=1.0.0",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+langchain = ["langchain>=1.0"]
+anthropic = ["anthropic"]
+openai = ["openai"]
+eval = ["anthropic", "openai"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "hypothesis",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.0",
+    "mypy>=2.4.0",
+    "pre-commit>=4.6.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rotguard"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["evals/results"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+# Importing `Callable` etc. from `typing` still works and is used throughout.
+ignore = ["UP035"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src/rotguard"]

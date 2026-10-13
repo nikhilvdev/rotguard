@@ -1,0 +1,79 @@
+{
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "goal",
+        "decision",
+        "constraint",
+        "question"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Key"
+    },
+    "status": {
+      "default": "active",
+      "enum": [
+        "active",
+        "superseded"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "superseded_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Superseded By"
+    },
+    "source_message_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Message Id"
+    },
+    "turn": {
+      "default": 0,
+      "title": "Turn",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "text"
+  ],
+  "title": "Entry",
+  "type": "object"
+}

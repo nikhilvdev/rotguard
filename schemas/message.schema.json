@@ -1,0 +1,209 @@
+{
+  "$defs": {
+    "Provenance": {
+      "description": "Where an item in the context came from.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool",
+            "system",
+            "summary",
+            "ledger"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "turn": {
+          "default": 0,
+          "title": "Turn",
+          "type": "integer"
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Name"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Id"
+        },
+        "parents": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Parents",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "TextBlock": {
+      "properties": {
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TextBlock",
+      "type": "object"
+    },
+    "ToolCallBlock": {
+      "properties": {
+        "type": {
+          "const": "tool_call",
+          "default": "tool_call",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "ToolCallBlock",
+      "type": "object"
+    },
+    "ToolResultBlock": {
+      "properties": {
+        "type": {
+          "const": "tool_result",
+          "default": "tool_result",
+          "title": "Type",
+          "type": "string"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "content"
+      ],
+      "title": "ToolResultBlock",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "system",
+        "user",
+        "assistant",
+        "tool"
+      ],
+      "title": "Role",
+      "type": "string"
+    },
+    "blocks": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "text": "#/$defs/TextBlock",
+            "tool_call": "#/$defs/ToolCallBlock",
+            "tool_result": "#/$defs/ToolResultBlock"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/TextBlock"
+          },
+          {
+            "$ref": "#/$defs/ToolCallBlock"
+          },
+          {
+            "$ref": "#/$defs/ToolResultBlock"
+          }
+        ]
+      },
+      "title": "Blocks",
+      "type": "array"
+    },
+    "provenance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Provenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "extra": {
+      "additionalProperties": true,
+      "title": "Extra",
+      "type": "object"
+    }
+  },
+  "required": [
+    "id",
+    "role"
+  ],
+  "title": "Message",
+  "type": "object"
+}
