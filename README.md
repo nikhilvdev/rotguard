@@ -1,6 +1,6 @@
 # rotguard
 
-Measure and guard against context rot in LLM agents. Work in progress: see [rotguard.md](rotguard.md) for the plan.
+Measure and guard against context rot in LLM agents.
 
 rotguard does not compact your context. It watches whatever does, keeps a ledger of the goals,
 decisions and constraints that must survive, and records where every item in the context came from.
