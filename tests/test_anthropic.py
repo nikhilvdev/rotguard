@@ -2,7 +2,11 @@ import json
 import re
 from types import SimpleNamespace
 
-from anthropic.types.beta import BetaCompactionBlock, BetaTextBlock
+import pytest
+
+pytest.importorskip("anthropic")
+
+from anthropic.types.beta import BetaCompactionBlock, BetaTextBlock  # noqa: E402
 
 from rotguard.adapters.anthropic import RotguardAnthropic, to_neutral
 from rotguard.probes import AuditPolicy
