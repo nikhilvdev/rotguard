@@ -21,17 +21,11 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 
-from rotguard.core import (
-    Message,
-    Observer,
-    Provenance,
-    TextBlock,
-    ToolCallBlock,
-    ToolResultBlock,
-    default_provenance,
-)
+from rotguard.core import Message, Provenance, TextBlock, ToolCallBlock, ToolResultBlock
 from rotguard.ledger import Entry, Ledger
 from rotguard.log import get_logger
+from rotguard.probes import AuditPolicy
+from rotguard.session import Session
 from rotguard.store import SQLiteStore
 
 log = get_logger(__name__)
@@ -144,12 +138,65 @@ def _failopen(fn: Callable[..., Any]) -> Callable[..., Any]:
     return inner
 
 
+class LangChainCaller:
+    """Side calls on the agent's own model, with its tools and system prompt, so the history that
+    contains tool calls stays valid for providers that require tools to be declared."""
+
+    def __init__(self, model: Any, tools: list[Any] | None = None, system: Any = None):
+        self.model, self.tools, self.system = model, tools or [], system
+
+    def ask(self, context: list[Message], question: str) -> str:
+        messages: list[AnyMessage] = [
+            *([self.system] if self.system else []),
+            *[from_neutral(m) for m in context],
+            HumanMessage(content=question),
+        ]
+        model = self.model
+        if self.tools:
+            with contextlib.suppress(Exception):  # a model that can't bind tools is asked as it is
+                model = model.bind_tools(self.tools)
+        return _text(model.invoke(messages).content)[0]
+
+
+def make_ledger_tool(
+    ledger: Ledger, get_turn: Callable[[], int], get_source: Callable[[], str | None]
+) -> Any:
+    """The `ledger_record` tool an agent calls to keep a goal, decision or constraint alive."""
+
+    @tool("ledger_record")
+    def ledger_record(
+        kind: Literal["goal", "decision", "constraint", "question"],
+        text: str,
+        key: str | None = None,
+        supersedes: str | None = None,
+    ) -> str:
+        """Record a goal, decision, constraint or open question so it survives context
+        compaction. Give the same `key` as an earlier entry (or its id in `supersedes`) when
+        this overrides it."""
+        try:
+            e = ledger.record(
+                kind,
+                text,
+                key=key,
+                supersedes=supersedes,
+                source_message_id=get_source(),
+                turn=get_turn(),
+            )
+        except ValueError as exc:
+            return f"not recorded: {exc}"
+        return f"recorded {e.id}"
+
+    return ledger_record
+
+
 class RotguardMiddleware(AgentMiddleware):
-    """Observe context changes, keep a ledger, and show the ledger to the model on every call.
+    """Observe context changes, keep a ledger, show it to the model on every call, and optionally
+    audit what each compaction lost.
 
     Place it after any compacting middleware (`SummarizationMiddleware`,
     `ContextEditingMiddleware`) in the `middleware=[...]` list so it sees their effect.
-    One instance serves one session.
+    One instance serves one session. Audits are off unless you pass an `AuditPolicy`, because each
+    one costs about three extra model calls.
     """
 
     def __init__(
@@ -158,80 +205,24 @@ class RotguardMiddleware(AgentMiddleware):
         session_id: str | None = None,
         inject_ledger: bool = True,
         ledger_tool: bool = True,
+        audit: AuditPolicy | None = None,
     ):
         super().__init__()
         self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
         self.session_id = session_id or uuid.uuid4().hex
         self.inject_ledger = inject_ledger
-        self.ledger = Ledger(
-            on_change=lambda e: self.store.upsert_entry(self.session_id, e.model_dump())
-        )
-        self._history, self._request = Observer("history"), Observer("request")
-        self._turn = 0
+        self.ledger = Ledger(on_change=self._save_entry)
+        self.session = Session(self.store, self.session_id, self.ledger, audit)
         self._last_assistant_id: str | None = None
-        self.tools = [self._make_tool()] if ledger_tool else []
-
-    def _make_tool(self) -> Any:
-        @tool("ledger_record")
-        def ledger_record(
-            kind: Literal["goal", "decision", "constraint", "question"],
-            text: str,
-            key: str | None = None,
-            supersedes: str | None = None,
-        ) -> str:
-            """Record a goal, decision, constraint or open question so it survives context
-            compaction. Give the same `key` as an earlier entry (or its id in `supersedes`) when
-            this overrides it."""
-            try:
-                e = self.ledger.record(
-                    kind,
-                    text,
-                    key=key,
-                    supersedes=supersedes,
-                    source_message_id=self._last_assistant_id,
-                    turn=self._turn,
+        self.tools = (
+            [
+                make_ledger_tool(
+                    self.ledger, lambda: self.session.turn, lambda: self._last_assistant_id
                 )
-            except ValueError as exc:
-                return f"not recorded: {exc}"
-            return f"recorded {e.id}"
-
-        return ledger_record
-
-    def _row(self, m: Message) -> dict[str, Any]:
-        prov = m.provenance or default_provenance(m, self._turn)
-        return {
-            "id": m.id,
-            "turn": self._turn,
-            "kind": prov.kind,
-            "role": m.role,
-            "tool_name": prov.tool_name,
-            "call_id": prov.call_id,
-            "parents": prov.parents,
-            "hash": m.content_hash,
-            "text": m.text,
-        }
-
-    # observation
-    def _observe(self, observer: Observer, messages: list[AnyMessage]) -> None:
-        neutral = to_neutral_list(messages)
-        obs = observer.observe(neutral, self._turn)
-        if observer is self._history:
-            if obs.added:
-                self.store.add_items(
-                    self.session_id,
-                    [self._row(m) for m in obs.added],
-                )
-            self.store.mark_removed(self.session_id, obs.removed, self._turn)
-            self.store.save_snapshot(self.session_id, self._turn, [m.id for m in neutral])
-        if obs.compaction:
-            self.store.add_event(self.session_id, "compaction", obs.compaction.to_dict())
-            log.info(
-                "compaction",
-                channel=observer.channel,
-                turn=self._turn,
-                removed=len(obs.removed),
-                rewritten=len(obs.rewritten),
-            )
+            ]
+            if ledger_tool
+            else []
+        )
 
     @_failopen
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -241,14 +232,20 @@ class RotguardMiddleware(AgentMiddleware):
 
     @_failopen
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        self._turn += 1
-        self._observe(self._history, state["messages"])
+        self.session.turn += 1
+        self.session.observe_history(to_neutral_list(state["messages"]))
         return None
+
+    def _save_entry(self, entry: Entry) -> None:
+        self.store.upsert_entry(self.session_id, entry.model_dump())
 
     def _prepare(self, request: Any) -> Any:
         try:
-            self._observe(self._request, request.messages)
+            self.session.observe_request(to_neutral_list(request.messages))
             text = self.ledger.render() if self.inject_ledger else ""
+            self.session.run_pending(
+                LangChainCaller(request.model, request.tools, request.system_message), text
+            )
             if text:
                 note = HumanMessage(content=text, name=LEDGER_MESSAGE_NAME)
                 return request.override(messages=[*request.messages, note])
@@ -271,7 +268,8 @@ class RotguardMiddleware(AgentMiddleware):
 
     @_failopen
     def after_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        self._observe(self._history, state["messages"])
+        self.session.observe_history(to_neutral_list(state["messages"]))
+        self.session.flush()
         return None
 
     async def abefore_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
