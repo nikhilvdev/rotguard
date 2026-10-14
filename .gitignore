@@ -223,3 +223,5 @@ __marimo__/
 evals/results/*
 !evals/results/.gitkeep
 rotguard.md
+# Claude Code project notes: kept local, never committed
+CLAUDE.md

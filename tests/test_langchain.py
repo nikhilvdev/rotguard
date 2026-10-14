@@ -243,3 +243,128 @@ def test_ordering_rules(order):
     assert hist == ([6, 8, 9] if late else [5, 7, 9])  # ...one step late if rotguard is first
     # clearing is applied to a copy of the request, so rotguard sees it only from inside
     assert (cleared > 0) == (order.index("edit") < order.index("rg"))
+
+
+# --- compaction audit through the middleware ---------------------------------------------------
+
+
+class QuizChat(FakeChat):
+    """Chat model that also answers audit prompts, knowing only what is in the context it gets."""
+
+    extract: list[Any] = []
+    qa: dict[str, str] = {}
+    ledger_answers: list[str] = []
+
+    def _generate(self, messages, stop=None, run_manager=None, **kw):
+        last = messages[-1].content if isinstance(messages[-1].content, str) else ""
+        if "about to be removed" in last:
+            import json
+
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content=json.dumps(self.extract)))]
+            )
+        if "Answer from the conversation above only" in last:
+            import re
+
+            text = "\n".join(str(m.content) for m in messages[:-1]) + last.split("Answer from")[0]
+            lines = []
+            for line in last.splitlines():
+                m = re.match(r"(\d+)\. (.*)", line)
+                if not m:
+                    continue
+                if m.group(2).startswith("List every goal"):
+                    ans = "; ".join(a for a in self.ledger_answers if a in text) or "unknown"
+                else:
+                    a = self.qa[m.group(2)]
+                    ans = a if a in text else "unknown"
+                lines.append(f"{m.group(1)}. {ans}")
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content="\n".join(lines)))]
+            )
+        return super()._generate(messages, stop, run_manager, **kw)
+
+
+def lossy_summarizer():
+    return FakeChat(
+        replies=[
+            AIMessage(content="SUMMARY: the user is auditing the order service.") for _ in range(10)
+        ]
+    )
+
+
+def audited_agent(policy, ledger_entry=False):
+    from rotguard.probes import AuditPolicy  # noqa: F401
+
+    model = QuizChat(
+        extract=[{"question": "Which table may be written to?", "answer": "staging_orders"}],
+        qa={"Which table may be written to?": "staging_orders"},
+        ledger_answers=["staging_orders"],
+    )
+    rg = RotguardMiddleware(audit=policy)
+    if ledger_entry:
+        rg.ledger.record("constraint", "Only write to staging_orders.", key="table")
+    sm = SummarizationMiddleware(
+        model=lossy_summarizer(), trigger=("messages", 5), keep=("messages", 2)
+    )
+    return create_agent(model=model, tools=[], middleware=[sm, rg]), rg, model
+
+
+def test_audit_reports_loss_and_ci_helper_fails():
+    from rotguard.probes import AuditPolicy
+    from rotguard.testing import assert_audit_loss
+
+    agent, rg, model = audited_agent(AuditPolicy(mode="ci"))
+    chat(agent, 6)
+    reports = rg.store.events(rg.session_id, "audit")
+    assert reports and reports[0]["loss"] == 1.0
+    assert (
+        reports[0]["lost"][0]["answer"] == "staging_orders"
+        and reports[0]["lost"][0]["origin_kind"] == "user"
+    )
+    assert any("User-stated" in s for s in reports[0]["suggestions"])
+    # side calls never entered the agent's history or the stored items
+    assert not any(
+        "Answer from the conversation" in i["text"] for i in rg.store.items(rg.session_id)
+    )
+    with pytest.raises(AssertionError, match="staging_orders"):
+        assert_audit_loss(rg.store, rg.session_id, max_loss=0.3)
+    assert_audit_loss(rg.store, rg.session_id, max_loss=1.0)
+
+
+def test_ledger_removes_residual_loss():
+    from rotguard.probes import AuditPolicy
+
+    agent, rg, _ = audited_agent(AuditPolicy(mode="ci"), ledger_entry=True)
+    chat(agent, 6)
+    reports = rg.store.events(rg.session_id, "audit")
+    assert reports[0]["loss"] == 0.0
+    # later compactions only remove an already-lossy summary: nothing checkable, never a loss
+    assert all(r["loss"] in (None, 0.0) for r in reports)
+
+
+def test_audit_is_off_by_default_and_background_audits_finish_on_flush():
+    from rotguard.probes import AuditPolicy
+
+    agent, rg, model = audited_agent(None)
+    chat(agent, 6)
+    assert not rg.store.events(rg.session_id, "audit")
+    assert not any(
+        "Answer from the conversation" in str(m.content) for call in model.seen for m in call
+    )
+
+    agent, rg, _ = audited_agent(AuditPolicy(mode="every"))  # background thread
+    chat(agent, 6)
+    rg.session.flush()
+    assert rg.store.events(rg.session_id, "audit")
+
+
+def test_audit_error_is_recorded_not_raised():
+    from rotguard.probes import AuditPolicy
+    from rotguard.testing import assert_audit_loss
+
+    agent, rg, model = audited_agent(AuditPolicy(mode="ci"))
+    model.qa = {}  # the quiz prompt will now raise KeyError inside the model
+    chat(agent, 6)
+    assert rg.store.events(rg.session_id, "audit_error")
+    with pytest.raises(AssertionError, match="audit failed"):
+        assert_audit_loss(rg.store, rg.session_id)

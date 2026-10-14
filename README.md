@@ -36,6 +36,53 @@ blame(rotguard.store, rotguard.session_id, "staging_orders")  # which message in
 diff(rotguard.store, rotguard.session_id, 3, 5)  # what changed between turns?
 ```
 
+## Audit what a compaction lost
+
+Audits are off unless you ask for them, because each one costs about three extra model calls
+(one to extract facts from the removed span, one quiz on the old context, one on the new).
+
+```python
+from rotguard.probes import AuditPolicy
+
+rotguard = RotguardMiddleware("rotguard.db", audit=AuditPolicy(mode="sampled", sample_rate=0.5))
+...
+rotguard.store.events(rotguard.session_id, "audit")  # loss, the facts lost, and what to change
+```
+
+The model is quizzed on facts taken from the removed text (each one checked to appear in it word for
+word) and on your ledger entries, once with the old context and once with the new. A fact counts as
+lost if only the old context answered it. `loss` is lost / answerable-before over facts that did
+not come from tool output (tool output is mostly ids and listings that no summary keeps); `loss_all`
+includes them, and every lost fact is listed either way. `loss` is `None` when the old context
+answered none of the facts it scores. Modes: `off`, `sampled`, `every`, and `ci`, which runs synchronously:
+
+```python
+from rotguard.testing import assert_audit_loss
+
+assert_audit_loss(rotguard.store, rotguard.session_id, max_loss=0.3)  # fails the test run
+```
+
+Limits worth knowing: a report compares one compaction with the context just before it, so a summary
+of an already-lossy summary reports little loss; answers are matched as text, not judged for meaning
+(a negated constraint can pass); and the questions are only as good as the facts the model extracts.
+In-place clearing by `ContextEditingMiddleware` repeats on every call, so it is audited once.
+
+## Other frameworks
+
+```python
+# Anthropic SDK: recognises server-side compaction blocks (threshold and on-demand) and audits them
+from rotguard.adapters.anthropic import RotguardAnthropic
+rg = RotguardAnthropic(anthropic.Anthropic(), audit=AuditPolicy(mode="every"))
+resp = rg.beta.messages.create(model=..., messages=..., betas=["compact-2026-01-12"], ...)
+
+# LangGraph: a node before your LLM node; the ledger is kept in graph state, so checkpoints keep it
+from rotguard.adapters.langgraph import RotguardGraph, RotguardState
+```
+
+See [src/rotguard/adapters/langgraph.py](src/rotguard/adapters/langgraph.py) for a full graph. The
+Anthropic wrapper is tested against the documented block shapes and the SDK's own types, not against
+the live API.
+
 Every hook fails open: if rotguard errors, the agent's call goes ahead unchanged and the error is logged.
 Logging uses [logquill](https://pypi.org/project/logquill/); call `rotguard.log.configure([...transports])` to see it.
 
