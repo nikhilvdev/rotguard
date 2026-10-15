@@ -17,7 +17,7 @@ from rotguard.log import configure
 
 from .core import STRATEGIES, run_scenario
 from .models import make_client
-from .suites import SUITES
+from .suites import ALL_SUITES, SUITES
 
 
 def main(argv=None):
@@ -41,7 +41,7 @@ def main(argv=None):
     results = []
     for s in names:
         for seed in range(a.seeds):
-            for sc in SUITES[s](seed=seed, turns=a.turns):
+            for sc in ALL_SUITES[s](seed=seed, turns=a.turns):
                 for strat in a.strategies.split(","):
                     results.append(run_scenario(sc, strat, client))
 

@@ -8,11 +8,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from .core import score
-from .suites import SUITES
+from .suites import ALL_SUITES
 
 
 def main(paths):
-    probes = {(s.suite, s.id): s.probe for b in SUITES.values() for s in b(seed=0, turns=1)}
+    probes = {(s.suite, s.id): s.probe for b in ALL_SUITES.values() for s in b(seed=0, turns=1)}
     for path in paths:
         agg = defaultdict(lambda: [0, 0])
         for line in Path(path).read_text().splitlines():

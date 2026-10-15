@@ -21,7 +21,7 @@ from rotguard.probes import run_audit
 
 from .core import STRATEGIES, SYSTEM, score
 from .models import Client, make_client
-from .suites import SUITES
+from .suites import ALL_SUITES, SUITES
 
 KEEP = 6  # messages the summarizer keeps verbatim (core.summarize default)
 
@@ -90,11 +90,11 @@ def permutation_p(
     return hits / n
 
 
-def run(client: Client, turns: int, seeds: int, suites: list[str]) -> list[Row]:
+def run(client: Client, turns: int, seeds: int, suites: list[str], cloze: int = 0) -> list[Row]:
     rows = []
     for name in suites:
         for seed in range(seeds):
-            for sc in SUITES[name](seed=seed, turns=turns):
+            for sc in ALL_SUITES[name](seed=seed, turns=turns):
                 new_hist = STRATEGIES["summarize"](sc.history, client)
                 reply = client.complete(
                     SYSTEM, [*new_hist, {"role": "user", "content": sc.probe.question}]
@@ -108,7 +108,12 @@ def run(client: Client, turns: int, seeds: int, suites: list[str]) -> list[Row]:
                 )
                 new = [summary, *old[-KEEP:]]
                 rep = run_audit(
-                    old=old, new=new, removed=old[:-KEEP], entries=[], caller=HarnessCaller(client)
+                    old=old,
+                    new=new,
+                    removed=old[:-KEEP],
+                    entries=[],
+                    caller=HarnessCaller(client),
+                    cloze=cloze,
                 )
                 hit = next(
                     (
@@ -159,16 +164,19 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--turns", type=int, default=30)
     ap.add_argument("--seeds", type=int, default=1)
     ap.add_argument("--suites", default="all")
+    ap.add_argument("--cloze", type=int, default=0, help="fallback facts built from the text")
     ap.add_argument("--out", default="evals/results")
     a = ap.parse_args(argv)
     client = make_client(a.model)
     suites = list(SUITES) if a.suites == "all" else a.suites.split(",")
-    rows = run(client, a.turns, a.seeds, suites)
+    rows = run(client, a.turns, a.seeds, suites, a.cloze)
     summary = summarize_rows(rows)
     print(json.dumps(summary, indent=2))
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"gate2-{int(time.time())}-{client.name.replace(':', '_')}-t{a.turns}.jsonl"
+    tag = "-cloze" if a.cloze else ""
+    stamp = f"{int(time.time())}-{client.name.replace(':', '_')}-t{a.turns}{tag}"
+    path = out / f"gate2-{stamp}.jsonl"
     path.write_text("\n".join(json.dumps(r.__dict__) for r in rows))
     print("wrote", path)
 

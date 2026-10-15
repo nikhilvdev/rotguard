@@ -10,7 +10,16 @@ from rotguard.core import Message
 from rotguard.ledger import Entry
 
 from .caller import SideCaller
-from .quiz import Fact, build_prompt, extract_facts, grade, ledger_facts
+from .quiz import (
+    Fact,
+    build_prompt,
+    cloze_facts,
+    drop_leaky,
+    extract_facts,
+    grade,
+    ledger_facts,
+    norm,
+)
 
 
 @dataclass
@@ -20,6 +29,7 @@ class AuditPolicy:
     mode: Literal["off", "sampled", "every", "ci"] = "sampled"
     sample_rate: float = 0.5
     max_facts: int = 5
+    cloze: int = 2  # fallback facts built from the text when extraction finds fewer than max_facts
     max_audits: int = 20  # per session
     ci_max_loss: float = 0.3  # used by rotguard.testing.assert_audit_loss
     seed: int | None = None
@@ -92,6 +102,7 @@ def run_audit(
     entries: list[Entry],
     caller: SideCaller,
     max_facts: int = 5,
+    cloze: int = 0,
     prefix: str = "",
 ) -> AuditReport:
     """Quiz the model on `old` and on `new`; a fact counts as lost if only `old` answers it.
@@ -107,6 +118,11 @@ def run_audit(
     """
     span = extract_facts(removed, caller, max_facts)
     calls = 1 if removed and max_facts > 0 else 0
+    if cloze and len(span) < max_facts:
+        span += cloze_facts(
+            removed, min(cloze, max_facts - len(span)), {norm(f.answer) for f in span}
+        )
+    span = drop_leaky(span)
     led = [] if prefix else ledger_facts(entries)
     facts = [*led, *span]
     if not facts:

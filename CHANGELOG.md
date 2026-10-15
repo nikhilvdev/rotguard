@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Audit hardening after Phase 2 (uncommitted work on top of PR #2):
+  - Long extracted answers are graded on their distinctive tokens (identifiers and numbers), not
+    as an exact sentence. A cloze fallback (`AuditPolicy.cloze`, default 2) builds facts straight
+    from user and agent text when extraction finds fewer than `max_facts`: a sentence with an
+    identifier or number is blanked and asked back. It needs no model call and works on models too
+    weak to return the extraction JSON.
+  - Fix: a quiz question that contained another fact's answer let the model copy it from the
+    prompt, so a lost fact read as kept. Such facts are now dropped (`drop_leaky`). Matching is
+    whole-token (`45` no longer matches inside `ref4558`). Both have regression tests.
+  - `loss` now scores facts that did not come from tool output; `loss_all` keeps the old definition.
+  - Evidence (qwen2.5 3B, 30 turns; one run per cell, so treat as indicative): on the tuning suites
+    AUC rose from 0.61 to 0.79. A first held-out set then exposed the leakage bug above (AUC 0.55,
+    one "kept" verdict followed by a failure). After the fix, a second held-out set of 9 new
+    templates, never run before the configuration was fixed, gave AUC 0.90 (18 scored scenarios),
+    "kept" 0 failures of 8, "lost" 8 failures of 10. The 1.5B model now runs the audit (24 of 30
+    scenarios scored, from 1) but fails 24 of 27 probes, so its AUC (0.63) says little.
+  - Not fixed: coverage. The audit never checked the probed fact in 5 of the 3B's 13 failures
+    on the second held-out set, and in 11 of the 1.5B's 24. Nine templates, three seeds each: the
+    effective sample is nine, so the p-values are optimistic.
+  - `evals`: two held-out suites (`holdout`, `holdout2`, selected by name only), `--cloze`,
+    `ROTGUARD_OPENAI_API_KEY` for hosted runs (a placeholder `OPENAI_API_KEY` is rejected).
+
 - Phase 2 (pre-release): compaction audit.
   - `rotguard.probes`: the audit. Facts come from the removed span (extracted by the model, kept
     only if they appear in it literally) and from the ledger; the same quiz is asked of the old and

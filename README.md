@@ -65,6 +65,9 @@ assert_audit_loss(rotguard.store, rotguard.session_id, max_loss=0.3)  # fails th
 Limits worth knowing: a report compares one compaction with the context just before it, so a summary
 of an already-lossy summary reports little loss; answers are matched as text, not judged for meaning
 (a negated constraint can pass); and the questions are only as good as the facts the model extracts.
+When extraction finds too few facts, `AuditPolicy(cloze=2)` (the default) adds facts built directly from
+the text. In our small-model tests a "kept" verdict on a fact was reliable, and a "lost" one was a
+warning rather than proof; the audit also never checked the probed fact in about 40% of failures.
 In-place clearing by `ContextEditingMiddleware` repeats on every call, so it is audited once.
 
 ## Other frameworks

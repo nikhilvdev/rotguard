@@ -215,3 +215,126 @@ def test_loss_is_none_when_only_tool_facts_were_answerable():
         caller=FakeCaller(extract, qa),
     )
     assert rep.loss is None and rep.loss_all == 1.0
+
+
+def test_long_extracted_answers_are_graded_on_distinctive_tokens():
+    removed = [msg("a", "Use port 8443 for the internal gateway, never 443.")]
+    extract = [{"question": "Which port?", "answer": "Use port 8443 for the internal gateway"}]
+    facts = extract_facts(removed, FakeCaller(extract, {}), 3)
+    assert facts[0].tokens == ["8443"] and facts[0].need == 1
+    assert grade(facts, False, "8443") == {"span:1": True}  # no need to repeat the sentence
+    assert grade(facts, False, "port 443") == {"span:1": False}
+    short = extract_facts(removed, FakeCaller([{"question": "Port?", "answer": "8443"}], {}), 3)
+    assert short[0].tokens == []  # short answers stay literal
+
+
+def test_cloze_facts_blank_the_token_and_skip_tool_output_and_summaries():
+    from rotguard.probes.quiz import cloze_facts
+
+    removed = [
+        msg("t", "grep found id4412 in the long listing today", "tool", "tool"),
+        msg("s", "Summary: the port is 9999 for everything", kind="summary"),
+        msg("u", "Never write to prod_orders; use staging_orders only. Thanks for the help today."),
+    ]
+    facts = cloze_facts(removed, 5)
+    assert [f.answer for f in facts] == ["prod_orders"]
+    f = facts[0]
+    assert "____" in f.question and "prod_orders" not in f.question  # the answer is not leaked
+    assert f.origin_id == "u" and f.origin_kind == "user" and f.source == "span"
+    assert cloze_facts(removed, 0) == []
+    # a skipped token is not reused; the next one in the sentence is blanked instead
+    other = cloze_facts(removed, 5, skip={"prod_orders"})
+    assert [f.answer for f in other] == ["staging_orders"]
+    assert "prod_orders" in other[0].question and "staging_orders" not in other[0].question
+    assert cloze_facts(removed, 5, skip={"prod_orders", "staging_orders"}) == []
+
+
+def test_cloze_fallback_covers_for_an_extractor_that_returns_nothing():
+    from rotguard.probes.quiz import cloze_facts
+
+    removed = [msg("u", "Use port 8443 for the internal gateway.")]
+    cloze = cloze_facts(removed, 1)[0]
+    qa = {cloze.question: "8443"}
+    new = [msg("s", "Summary: some gateway work.", kind="summary")]
+    kw = {"old": removed, "new": new, "removed": removed, "entries": []}
+    without = run_audit(**kw, caller=FakeCaller([], qa))
+    assert without.loss is None and without.facts_total == 0
+    with_cloze = run_audit(**kw, caller=FakeCaller([], qa), cloze=2)
+    assert with_cloze.loss == 1.0 and with_cloze.lost[0]["id"] == "cloze:1"
+    assert with_cloze.side_calls == 3
+    # extracted facts are never duplicated by the fallback
+    extract = [{"question": "Which port?", "answer": "8443"}]
+    both = run_audit(**kw, caller=FakeCaller(extract, {"Which port?": "8443", **qa}), cloze=2)
+    assert both.facts_total == 1
+
+
+def test_short_answers_match_whole_tokens_only():
+    from rotguard.probes.quiz import Fact, contains, is_correct
+
+    assert contains(norm("rotate every 45 days"), "45")
+    assert not contains(norm("see ref4558 and id1450"), "45")
+    assert contains(norm("the budget is 12,500 EUR"), norm("12500"))
+    assert contains(norm("only use staging_orders."), "staging_orders")
+    assert not contains(norm("only use pre_staging_orders"), "staging_orders")
+    fact = Fact("span:1", "span", "45", "q")
+    assert is_correct(fact, "every 45 days") and not is_correct(fact, "ref4558")
+
+
+def test_a_question_that_contains_another_facts_answer_is_dropped():
+    """Regression: the quiz prompt held the extractor's 'question' 'rotate the signing key every 45
+    days', so the model copied 45 from the prompt and the audit called a lost fact 'kept'."""
+    from rotguard.probes.quiz import Fact, cloze_facts, drop_leaky
+
+    leaky = Fact("span:1", "span", "Understood.", "rotate the signing key every 45 days")
+    cloze = Fact(
+        "cloze:1", "span", "45", "Complete the statement: rotate the signing key every ____ days"
+    )
+    assert drop_leaky([leaky, cloze]) == [cloze]
+    assert drop_leaky([cloze]) == [cloze]
+
+    removed = [
+        msg("u", "Please rotate the signing key every 45 days, no exceptions."),
+        msg("a", "Understood.", "assistant"),
+    ]
+    extract = [{"question": "rotate the signing key every 45 days", "answer": "Understood."}]
+    cz = cloze_facts(removed, 1)[0]
+    qa = {"rotate the signing key every 45 days": "Understood.", cz.question: "45"}
+    new = [msg("s", "Summary: key rotation was discussed.", kind="summary")]
+    # FakeCaller, like a real model, can read the answer out of the quiz prompt it is given
+    rep = run_audit(
+        old=removed, new=new, removed=removed, entries=[], caller=FakeCaller(extract, qa), cloze=2
+    )
+    by_id = {c["id"]: c for c in rep.checked}
+    assert "span:1" not in by_id  # the leaky fact was dropped from the quiz
+    assert by_id["cloze:1"]["before"] and not by_id["cloze:1"]["after"]
+    assert rep.loss == 1.0  # reported as lost, not falsely kept
+
+
+def test_policy_default_turns_the_cloze_fallback_on_through_a_session():
+    from rotguard.ledger import Ledger
+    from rotguard.probes.quiz import cloze_facts
+    from rotguard.session import Session
+    from rotguard.store import SQLiteStore
+
+    assert AuditPolicy().cloze == 2 and AuditPolicy(cloze=0).cloze == 0
+    fact_msg = msg("u", "Please rotate the signing key every 45 days, no exceptions.")
+    cz = cloze_facts([fact_msg], 1)[0]
+    store = SQLiteStore()
+    session = Session(store, "s", Ledger(), AuditPolicy(mode="ci"))
+    session.turn = 1
+    session.observe_history([fact_msg, msg("b", "ok", "assistant")])
+    session.turn = 2
+    session.observe_history([msg("s1", "Summary: key rotation was discussed.", kind="summary")])
+    # the extractor returns nothing, as a weak model often does; only the fallback can find a fact
+    session.run_pending(FakeCaller([], {cz.question: "45"}))
+    (event,) = store.events("s", "audit")
+    assert [c["id"] for c in event["checked"]] == ["cloze:1"]
+    assert event["loss"] == 1.0 and event["lost"][0]["answer"] == "45"
+
+    off = Session(SQLiteStore(), "o", Ledger(), AuditPolicy(mode="ci", cloze=0))
+    off.turn = 1
+    off.observe_history([fact_msg, msg("b", "ok", "assistant")])
+    off.turn = 2
+    off.observe_history([msg("s1", "Summary.", kind="summary")])
+    off.run_pending(FakeCaller([], {cz.question: "45"}))
+    assert off.store.events("o", "audit")[0]["facts_total"] == 0

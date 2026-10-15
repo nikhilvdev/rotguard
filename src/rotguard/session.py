@@ -145,6 +145,7 @@ class Session:
                 entries=entries,
                 caller=caller,
                 max_facts=self.policy.max_facts,
+                cloze=self.policy.cloze,
                 prefix=ledger_text,
             )
             self.store.add_event(

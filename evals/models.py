@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Protocol
 
 Message = dict  # {"role": "user" | "assistant", "content": str}
@@ -13,13 +14,28 @@ class Client(Protocol):
     def complete(self, system: str, messages: list[Message], max_tokens: int = 400) -> str: ...
 
 
+def openai_key() -> str:
+    """The key for hosted OpenAI runs.
+
+    `ROTGUARD_OPENAI_API_KEY` wins over `OPENAI_API_KEY`, because the latter is often set to a
+    placeholder (for example "ollama") to point tools at a local server.
+    """
+    key = os.environ.get("ROTGUARD_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+    if not key.startswith("sk-") or len(key) < 30:
+        raise RuntimeError(
+            "no real OpenAI key found: set ROTGUARD_OPENAI_API_KEY in your environment "
+            "(OPENAI_API_KEY is unset or looks like a placeholder)"
+        )
+    return key
+
+
 class OpenAIClient:
     def __init__(self, model: str = "gpt-4.1-mini"):
         from openai import OpenAI
 
         self.name = f"openai:{model}"
         self._model = model
-        self._c = OpenAI()
+        self._c = OpenAI(api_key=openai_key())
 
     def complete(self, system, messages, max_tokens=400):
         r = self._c.chat.completions.create(
