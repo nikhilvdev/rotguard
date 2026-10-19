@@ -24,7 +24,7 @@ from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemM
 from rotguard.core import Message, Provenance, TextBlock, ToolCallBlock, ToolResultBlock
 from rotguard.ledger import Entry, Ledger
 from rotguard.log import get_logger
-from rotguard.probes import AuditPolicy
+from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult
 from rotguard.session import Session
 from rotguard.store import SQLiteStore
 
@@ -206,13 +206,15 @@ class RotguardMiddleware(AgentMiddleware):
         inject_ledger: bool = True,
         ledger_tool: bool = True,
         audit: AuditPolicy | None = None,
+        recall: RecallPolicy | None = None,
+        on_alert: Callable[[RecallResult], None] | None = None,
     ):
         super().__init__()
         self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
         self.session_id = session_id or uuid.uuid4().hex
         self.inject_ledger = inject_ledger
         self.ledger = Ledger(on_change=self._save_entry)
-        self.session = Session(self.store, self.session_id, self.ledger, audit)
+        self.session = Session(self.store, self.session_id, self.ledger, audit, recall, on_alert)
         self._last_assistant_id: str | None = None
         self.tools = (
             [
@@ -246,8 +248,9 @@ class RotguardMiddleware(AgentMiddleware):
             self.session.run_pending(
                 LangChainCaller(request.model, request.tools, request.system_message), text
             )
-            if text:
-                note = HumanMessage(content=text, name=LEDGER_MESSAGE_NAME)
+            shown = "\n".join(t for t in (text, self.session.marker_note()) if t)
+            if shown:
+                note = HumanMessage(content=shown, name=LEDGER_MESSAGE_NAME)
                 return request.override(messages=[*request.messages, note])
         except Exception as exc:
             _warn(hook="wrap_model_call", error=repr(exc))
@@ -264,6 +267,7 @@ class RotguardMiddleware(AgentMiddleware):
         last = state["messages"][-1]
         if isinstance(last, AIMessage):
             self._last_assistant_id = last.id
+            self.session.observe_reply(last.text)
         return None
 
     @_failopen

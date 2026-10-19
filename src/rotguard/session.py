@@ -6,6 +6,7 @@ lives here so LangChain, LangGraph and the Anthropic wrapper behave the same way
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -13,7 +14,16 @@ from typing import Any
 from rotguard.core import Message, Observation, Observer, default_provenance
 from rotguard.ledger import Entry, Ledger
 from rotguard.log import get_logger
-from rotguard.probes import AuditPolicy, SideCaller, run_audit
+from rotguard.probes import (
+    AuditPolicy,
+    RecallMonitor,
+    RecallPolicy,
+    RecallResult,
+    SideCaller,
+    passive_signals,
+    run_audit,
+    run_recall,
+)
 from rotguard.store import SQLiteStore
 
 log = get_logger(__name__)
@@ -30,11 +40,19 @@ class _Pending:
 
 class Session:
     def __init__(
-        self, store: SQLiteStore, session_id: str, ledger: Ledger, audit: AuditPolicy | None = None
+        self,
+        store: SQLiteStore,
+        session_id: str,
+        ledger: Ledger,
+        audit: AuditPolicy | None = None,
+        recall: RecallPolicy | None = None,
+        on_alert: Callable[[RecallResult], None] | None = None,
     ):
         self.store, self.session_id, self.ledger = store, session_id, ledger
         self.policy = audit or AuditPolicy(mode="off")
         self._gate = self.policy.gate()
+        self.recall = RecallMonitor(recall or RecallPolicy())
+        self._on_alert = on_alert
         self.history, self.request = Observer("history"), Observer("request")
         self.turn = 0
         self._prev_hist: list[Message] = []
@@ -118,6 +136,7 @@ class Session:
     def run_pending(self, caller: SideCaller, ledger_text: str = "") -> None:
         """Start audits for compactions seen since the last call, as the policy allows."""
         pending, self._pending = self._pending, []
+        self.run_recall_check(self._prev_req or self._prev_hist, caller)
         for p in pending:
             if not self._gate.allow():
                 continue
@@ -126,13 +145,75 @@ class Session:
             def job(p: _Pending = p, entries: list[Entry] = entries) -> None:
                 self._execute(p, caller, ledger_text, entries)
 
-            if self.policy.mode == "ci" or not self.policy.background:
-                job()
-            else:
-                self._pool = self._pool or ThreadPoolExecutor(
-                    1, thread_name_prefix="rotguard-audit"
+            self._submit(job, self.policy.mode == "ci" or not self.policy.background)
+
+    def _submit(self, job: Callable[[], None], inline: bool) -> None:
+        if inline:
+            job()
+            return
+        self._pool = self._pool or ThreadPoolExecutor(1, thread_name_prefix="rotguard-audit")
+        self._futures.append(self._pool.submit(job))
+
+    # --- recall probes -------------------------------------------------------------------
+
+    def run_recall_check(self, context: list[Message], caller: SideCaller) -> None:
+        """Start a recall probe over `context` if the policy says one is due this turn."""
+        if self.recall.policy.mode == "off":
+            return
+        entries: list[Entry] = [e.model_copy() for e in self.ledger.active()]
+        if self.recall.policy.signals:
+            sig = passive_signals(context, entries)
+            if sig.flag:
+                self.recall.flag()
+                self.store.add_event(
+                    self.session_id, "signals", {"turn": self.turn, **sig.__dict__}
                 )
-                self._futures.append(self._pool.submit(job))
+        if not self.recall.due(self.turn):
+            return
+        turn = self.turn
+
+        def job() -> None:
+            self._execute_recall(context, entries, caller, turn)
+
+        self._submit(job, not self.recall.policy.background)
+
+    def marker_note(self) -> str:
+        """The standing instruction for the marker check, or "" when it is off (tier 2)."""
+        m = self.recall.policy.marker
+        return f"[rotguard marker: begin every reply with {m}]" if m else ""
+
+    def observe_reply(self, text: str) -> None:
+        """Tier 2: a reply without the marker means the standing instruction was dropped."""
+        m = self.recall.policy.marker
+        if m and self.recall.policy.mode != "off" and m not in text:
+            self.recall.flag()
+            self.store.add_event(self.session_id, "marker_miss", {"turn": self.turn})
+            log.info("marker missed", turn=self.turn)
+
+    def _execute_recall(
+        self, context: list[Message], entries: list[Entry], caller: SideCaller, turn: int
+    ) -> None:
+        try:
+            r = run_recall(
+                context=context,
+                entries=entries,
+                caller=caller,
+                sample=self.recall.policy.sample,
+                rng=self.recall.rng,
+                turn=turn,
+            )
+            alert = self.recall.record(r)
+            self.store.add_event(
+                self.session_id,
+                "recall",
+                {**r.to_dict(), "rolling": self.recall.rolling, "alert": alert},
+            )
+            log.info("recall", turn=turn, score=r.score, missed=len(r.missed), alert=alert)
+            if alert and self._on_alert:
+                self._on_alert(r)
+        except Exception as exc:  # a probe must never break the agent
+            self.store.add_event(self.session_id, "recall_error", {"error": repr(exc)})
+            log.warn("recall failed", error=repr(exc))
 
     def _execute(
         self, p: _Pending, caller: SideCaller, ledger_text: str, entries: list[Entry]

@@ -368,3 +368,41 @@ def test_audit_error_is_recorded_not_raised():
     assert rg.store.events(rg.session_id, "audit_error")
     with pytest.raises(AssertionError, match="audit failed"):
         assert_audit_loss(rg.store, rg.session_id)
+
+
+def recall_agent(recall, on_alert=None):
+    model = QuizChat(ledger_answers=["staging_orders"])
+    rg = RotguardMiddleware(recall=recall, on_alert=on_alert)
+    rg.ledger.record("constraint", "Only write to staging_orders.", key="table")
+    sm = SummarizationMiddleware(
+        model=lossy_summarizer(), trigger=("messages", 5), keep=("messages", 2)
+    )
+    return create_agent(model=model, tools=[], middleware=[sm, rg]), rg, model
+
+
+def test_recall_probe_alerts_once_a_summary_drops_the_constraint():
+    from rotguard.probes import RecallPolicy
+
+    alerts = []
+    policy = RecallPolicy(mode="every", every=1, alert_after=2, background=False, signals=False)
+    agent, rg, _ = recall_agent(policy, alerts.append)
+    chat(agent, 8)
+    scores = [e["score"] for e in rg.store.events(rg.session_id, "recall")]
+    assert scores[0] == 1.0 and scores[-1] == 0.0  # remembered at first, lost after compaction
+    assert len(alerts) == 1
+    # the probe is a side call: it never reached the stored history
+    assert not any(
+        "Answer from the conversation" in i["text"] for i in rg.store.items(rg.session_id)
+    )
+
+
+def test_marker_miss_forces_a_probe_ahead_of_schedule():
+    from rotguard.probes import RecallPolicy
+
+    policy = RecallPolicy(mode="every", every=100, marker="RG-OK", background=False, signals=False)
+    agent, rg, model = recall_agent(policy)
+    model.replies = [AIMessage(content="RG-OK sure")]  # later replies are plain "ok": no marker
+    chat(agent, 3)
+    assert len(rg.store.events(rg.session_id, "marker_miss")) >= 1
+    assert len(rg.store.events(rg.session_id, "recall")) == 2  # turn 1, then forced by the miss
+    assert any("begin every reply with RG-OK" in str(m.content) for m in model.seen[0])
