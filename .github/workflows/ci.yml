@@ -20,7 +20,9 @@ jobs:
 
       - run: uv python install ${{ matrix.python-version }}
 
-      - run: uv sync --python ${{ matrix.python-version }} --extra langchain --extra anthropic
+      - run: >-
+          uv sync --python ${{ matrix.python-version }}
+          --extra langchain --extra anthropic --extra openai --extra mcp
 
       - run: uv run ruff check .
 
