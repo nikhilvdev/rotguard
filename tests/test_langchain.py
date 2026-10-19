@@ -406,3 +406,57 @@ def test_marker_miss_forces_a_probe_ahead_of_schedule():
     assert len(rg.store.events(rg.session_id, "marker_miss")) >= 1
     assert len(rg.store.events(rg.session_id, "recall")) == 2  # turn 1, then forced by the miss
     assert any("begin every reply with RG-OK" in str(m.content) for m in model.seen[0])
+
+
+def unrecallable_agent(policy):
+    """No summarizer, and a ledger entry the chat never mentions: every probe fails, history grows."""
+    model = QuizChat(ledger_answers=["region_zz9"])
+    rg = RotguardMiddleware(recall=policy)
+    rg.ledger.record("constraint", "Deploy region is region_zz9.")
+    return create_agent(model=model, tools=[], middleware=[rg]), rg, model
+
+
+def test_alert_with_handoff_action_restarts_the_context_from_the_ledger():
+    from rotguard.probes import RecallPolicy
+
+    policy = RecallPolicy(
+        mode="every",
+        every=1,
+        alert_after=1,
+        background=False,
+        signals=False,
+        action="handoff",
+        handoff_keep=2,
+    )
+    agent, rg, model = unrecallable_agent(policy)
+    chat(agent, 8)
+    events = rg.store.events(rg.session_id, "handoff")
+    assert events and all(e["after"] < e["before"] for e in events)
+    seen = [str(m.content) for call in model.seen for m in call]
+    assert any("rotguard handoff" in c and "region_zz9" in c for c in seen)
+    # the replacement is a real history change, so the observer records it as a compaction
+    assert len(rg.store.events(rg.session_id, "compaction")) >= 1
+
+
+def test_a_handoff_that_would_not_shrink_the_context_waits_until_it_would():
+    from rotguard.probes import RecallPolicy
+
+    policy = RecallPolicy(
+        mode="every", every=1, alert_after=1, background=False, signals=False, action="handoff"
+    )
+    agent, rg, _ = recall_agent(policy)  # a summarizer keeps the context at about 3 messages
+    chat(agent, 8)
+    assert rg.store.events(rg.session_id, "recall") and not rg.store.events(
+        rg.session_id, "handoff"
+    )
+
+
+def test_handoff_is_off_by_default():
+    from rotguard.probes import RecallPolicy
+
+    policy = RecallPolicy(mode="every", every=1, alert_after=1, background=False, signals=False)
+    agent, rg, model = recall_agent(policy)
+    chat(agent, 8)
+    assert rg.store.events(rg.session_id, "recall") and not rg.store.events(
+        rg.session_id, "handoff"
+    )

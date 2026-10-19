@@ -86,6 +86,15 @@ See [src/rotguard/adapters/langgraph.py](src/rotguard/adapters/langgraph.py) for
 Anthropic wrapper is tested against the documented block shapes and the SDK's own types, not against
 the live API.
 
+## Recall checks, handoff, CLI and MCP
+
+`RecallPolicy(mode="every")` periodically asks the model to restate ledger entries and alerts after
+repeated misses; `action="handoff"` can then restart the context from the ledger. A `rotguard`
+command writes HTML reports, replays a saved trace under another model, and serves the ledger to MCP
+clients (`rotguard[mcp]`). Recall checks have **not** been shown to warn before a task fails (first
+benchmark: qwen2.5 3B, 9 scenarios, inconclusive), so use them to log and experiment. See the
+[docs](docs/index.md): `docs/evaluation.md` has the numbers and caveats.
+
 Every hook fails open: if rotguard errors, the agent's call goes ahead unchanged and the error is logged.
 Logging uses [logquill](https://pypi.org/project/logquill/); call `rotguard.log.configure([...transports])` to see it.
 
@@ -95,4 +104,5 @@ Logging uses [logquill](https://pypi.org/project/logquill/); call `rotguard.log.
 uv sync --extra langchain --extra eval
 uv run pytest
 uv run python -m evals.run --model ollama:qwen2.5:3b --turns 40 --strategies none,summarize,summarize+ledger
+uv sync --group docs && uv run mkdocs serve   # the docs site
 ```

@@ -1,0 +1,20 @@
+site_name: rotguard
+site_description: Measure and guard against context rot in LLM agents.
+repo_url: https://github.com/nikhilvdev/rotguard
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Audit a compaction: audit.md
+  - Recall checks and handoff: recall.md
+  - CLI and MCP: cli.md
+  - Evaluation: evaluation.md
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - tables
