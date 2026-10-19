@@ -20,6 +20,7 @@ audit results go to the store (a SQLite file you keep next to the checkpoint dat
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import AnyMessage, HumanMessage
@@ -32,7 +33,7 @@ from rotguard.adapters.langchain import (
     to_neutral_list,
 )
 from rotguard.ledger import Entry, Ledger
-from rotguard.probes import AuditPolicy
+from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult
 from rotguard.session import Session
 from rotguard.store import SQLiteStore
 
@@ -51,16 +52,22 @@ class RotguardGraph:
         audit: AuditPolicy | None = None,
         model: Any = None,
         inject_ledger: bool = True,
+        recall: RecallPolicy | None = None,
+        on_alert: Callable[[RecallResult], None] | None = None,
     ):
-        if audit is not None and audit.mode != "off" and model is None:
-            raise ValueError("audits need the agent's model: pass model=...")
+        for mode, what in (
+            (audit and audit.mode, "audits"),
+            (recall and recall.mode, "recall probes"),
+        ):
+            if mode not in (None, "off") and model is None:
+                raise ValueError(f"{what} need the agent's model: pass model=...")
         self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
         self.session_id = session_id or uuid.uuid4().hex
         self.model, self.inject_ledger = model, inject_ledger
         self.ledger = Ledger(
             on_change=lambda e: self.store.upsert_entry(self.session_id, e.model_dump())
         )
-        self.session = Session(self.store, self.session_id, self.ledger, audit)
+        self.session = Session(self.store, self.session_id, self.ledger, audit, recall, on_alert)
         self.tools = [make_ledger_tool(self.ledger, lambda: self.session.turn, lambda: None)]
 
     def _save_entry(self, entry: Entry) -> None:
@@ -82,9 +89,20 @@ class RotguardGraph:
 
     def with_ledger(self, messages: list[AnyMessage]) -> list[AnyMessage]:
         """`messages` plus the active ledger at the end, for this model call only."""
-        text = self.ledger.render() if self.inject_ledger else ""
+        text = "\n".join(
+            t
+            for t in (
+                self.ledger.render() if self.inject_ledger else "",
+                self.session.marker_note(),
+            )
+            if t
+        )
         return (
             [*messages, HumanMessage(content=text, name=LEDGER_MESSAGE_NAME)]
             if text
             else list(messages)
         )
+
+    def observe_reply(self, text: str) -> None:
+        """Call with each model reply when `recall.marker` is set, so a dropped marker is seen."""
+        self.session.observe_reply(text)

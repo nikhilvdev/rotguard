@@ -66,3 +66,23 @@ def test_node_sees_compaction_and_audit_needs_a_model():
         and events[0]["summary_ids"] == ["sum"]
         and len(events[0]["removed_ids"]) == 4
     )
+
+
+def test_recall_needs_a_model_and_probes_each_pass_through_the_node():
+    import pytest
+
+    from rotguard.probes import RecallPolicy
+
+    policy = RecallPolicy(mode="every", every=1, signals=False, background=False)
+    with pytest.raises(ValueError, match="recall probes"):
+        RotguardGraph(recall=policy)
+    model = FakeChat()
+    rg = RotguardGraph(model=model, recall=policy)
+    rg.ledger.record("constraint", "only write to staging_orders", key="table")
+    graph = build(rg, model, MemorySaver())
+    graph.invoke(
+        {"messages": [HumanMessage(content="only write to staging_orders")]},
+        {"configurable": {"thread_id": "r"}},
+    )
+    ev = rg.store.events(rg.session_id, "recall")
+    assert len(ev) == 1 and ev[0]["asked"]

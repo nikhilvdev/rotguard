@@ -29,8 +29,8 @@ def flat(content):
 class FakeClient:
     """Stands in for anthropic.Anthropic(): knows only what is in the context a call carries."""
 
-    def __init__(self, answers):
-        self.answers, self.calls = answers, []
+    def __init__(self, answers, ledger_answers=()):
+        self.answers, self.calls, self.ledger_answers = answers, [], list(ledger_answers)
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
 
     def create(self, **kw):
@@ -40,11 +40,15 @@ class FakeClient:
         if "about to be removed" in last:
             reply = json.dumps([{"question": q, "answer": a} for q, a in self.answers.items()])
         elif "Answer from the conversation above only" in last:
-            reply = "\n".join(
-                f"{m.group(1)}. {self.answers[m.group(2)] if self.answers[m.group(2)] in text else 'unknown'}"
-                for m in (re.match(r"(\d+)\. (.*)", ln) for ln in last.splitlines())
-                if m and m.group(2) in self.answers
-            )
+            lines = []
+            for m in (re.match(r"(\d+)\. (.*)", ln) for ln in last.splitlines()):
+                if m and m.group(2).startswith("List every goal"):
+                    known = [a for a in self.ledger_answers if a in text]
+                    lines.append(f"{m.group(1)}. " + ("; ".join(known) or "unknown"))
+                elif m and m.group(2) in self.answers:
+                    a = self.answers[m.group(2)]
+                    lines.append(f"{m.group(1)}. {a if a in text else 'unknown'}")
+            reply = "\n".join(lines)
         else:
             reply = "ok"
         return SimpleNamespace(
@@ -106,9 +110,11 @@ def test_ids_are_stable_across_requests_even_for_repeated_messages():
     assert [m.id for m in a] == [m.id for m in b][:2] and a[0].id != a[1].id
 
 
-def run_conversation(audit):
-    client = FakeClient({"Which table may be written to?": "staging_orders"})
-    rg = RotguardAnthropic(client, audit=audit)
+def run_conversation(audit, recall=None, on_alert=None):
+    client = FakeClient({"Which table may be written to?": "staging_orders"}, ["staging_orders"])
+    rg = RotguardAnthropic(client, audit=audit, recall=recall, on_alert=on_alert)
+    if recall:
+        rg.ledger.record("constraint", "Only write to staging_orders.")
     history = [
         user("Constraint: only write to staging_orders."),
         {"role": "assistant", "content": "ok"},
@@ -183,3 +189,19 @@ def test_wrapper_fails_open_and_passes_other_attributes_through():
     rg.store.add_items = lambda *a, **k: 1 / 0
     resp = rg.beta.messages.create(model="m", max_tokens=5, messages=[user("hi")])
     assert resp.content[0].text == "ok"
+
+
+def test_recall_probe_sees_the_constraint_until_compaction_drops_it():
+    from rotguard.probes import RecallPolicy
+
+    policy = RecallPolicy(mode="every", every=1, signals=False, background=False)
+    client, rg, _ = run_conversation(None, policy)
+    scores = [e["score"] for e in rg.store.events(rg.session_id, "recall")]
+    assert scores == [1.0, 0.0]
+    probes = [
+        c
+        for c in client.calls
+        if "restate" in flat(c["messages"][-1]["content"])
+        or "List every goal" in flat(c["messages"][-1]["content"])
+    ]
+    assert len(probes) == 2 and all(c["tools"] == TOOLS and c["betas"] == BETAS for c in probes)

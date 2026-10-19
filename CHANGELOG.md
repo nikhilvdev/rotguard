@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Phase 3 (pre-release): recall checks.
+  - `rotguard.probes.recall`: tier 3 recall probes. Every `every` turns a side call over the
+    context the agent would use asks the model to restate sampled active ledger entries, graded
+    per entry; `RecallMonitor` keeps a rolling score and alerts after `alert_after` failed probes
+    in a row, never on one miss. `calibrate()` picks a per-model `pass_at` from clean-context
+    probes. Off by default; probes never enter history.
+  - `rotguard.probes.signals`: tier 1 passive signals (goal-word overlap, repeated replies, tool
+    error rate), no model call. A flag runs a probe now instead of on schedule. Overlap is lexical,
+    not embedding based.
+  - Tier 2 marker: `RecallPolicy(marker=...)` adds a standing instruction to the injected ledger
+    note; `Session.observe_reply` forces a probe when a reply lacks it. LangChain and LangGraph
+    only (`RotguardGraph.observe_reply`); the Anthropic and OpenAI wrappers inject nothing.
+  - `Session(recall=, on_alert=)`; `recall=` and `on_alert=` on `RotguardMiddleware`,
+    `RotguardGraph` and `RotguardAnthropic`. Probes run on the audit's background worker.
+  - `rotguard.adapters.openai_agents.RotguardSession`: wraps any Agents SDK session (trimming or
+    summarizing), sees compactions at `get_items`, audits and probes through `responses.create`.
+    Duck-typed; tested against a fake session, not the real SDK.
+  - `evals/gate3.py`: replays a scenario turn by turn and reports the lead of the recall alert
+    over the first task failure, misses, false alarms and probe calls per turn.
+  - Test status (2026-10-19, branch `feat/phase-3-recall-checks`): 78 tests pass (was 60 before
+    Phase 3; the new ones cover recall, signals, the marker, all four adapters and the Gate 3
+    summary); ruff, ruff format and strict mypy are clean. All tests use fake models. The Agents
+    SDK wrapper is tested against a fake session, not the real SDK. Gate 3 on a real model: see
+    `rotguard.md` 10.2.
+
 - Audit hardening after Phase 2 (uncommitted work on top of PR #2):
   - Long extracted answers are graded on their distinctive tokens (identifiers and numbers), not
     as an exact sentence. A cloze fallback (`AuditPolicy.cloze`, default 2) builds facts straight

@@ -19,12 +19,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from rotguard.core import Message, Provenance, TextBlock, ToolCallBlock, ToolResultBlock
 from rotguard.ledger import Ledger
 from rotguard.log import get_logger
-from rotguard.probes import AuditPolicy
+from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult
 from rotguard.session import Session
 from rotguard.store import SQLiteStore
 
@@ -143,6 +144,8 @@ class RotguardAnthropic:
         store: SQLiteStore | str | None = None,
         session_id: str | None = None,
         audit: AuditPolicy | None = None,
+        recall: RecallPolicy | None = None,
+        on_alert: Callable[[RecallResult], None] | None = None,
     ):
         self._client = client
         self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
@@ -150,7 +153,7 @@ class RotguardAnthropic:
         self.ledger = Ledger(
             on_change=lambda e: self.store.upsert_entry(self.session_id, e.model_dump())
         )
-        self.session = Session(self.store, self.session_id, self.ledger, audit)
+        self.session = Session(self.store, self.session_id, self.ledger, audit, recall, on_alert)
         self.beta = _Beta(self)
 
     def __getattr__(self, name: str) -> Any:  # everything else is the plain client
