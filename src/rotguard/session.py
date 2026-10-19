@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from rotguard.core import Message, Observation, Observer, default_provenance
+from rotguard.handoff import handoff
 from rotguard.ledger import Entry, Ledger
 from rotguard.log import get_logger
 from rotguard.probes import (
@@ -53,6 +54,7 @@ class Session:
         self._gate = self.policy.gate()
         self.recall = RecallMonitor(recall or RecallPolicy())
         self._on_alert = on_alert
+        self.handoff_pending = False
         self.history, self.request = Observer("history"), Observer("request")
         self.turn = 0
         self._prev_hist: list[Message] = []
@@ -177,6 +179,27 @@ class Session:
 
         self._submit(job, not self.recall.policy.background)
 
+    def take_handoff(self, context: list[Message]) -> list[Message] | None:
+        """If an alert asked for a handoff, the fresh context to use instead of `context`.
+
+        The caller must replace its history with the result; this only builds it and records
+        the event. Returns None when no handoff is pending. A pending handoff that would not
+        shrink the context yet stays pending, and a passing recall probe cancels it.
+        """
+        if not self.handoff_pending:
+            return None
+        fresh = handoff(context, self.ledger, keep=self.recall.policy.handoff_keep)
+        if len(fresh) >= len(context):  # nothing would be dropped: stay pending until it would
+            return None
+        self.handoff_pending = False
+        self.store.add_event(
+            self.session_id,
+            "handoff",
+            {"turn": self.turn, "before": len(context), "after": len(fresh)},
+        )
+        log.info("handoff", turn=self.turn, before=len(context), after=len(fresh))
+        return fresh
+
     def marker_note(self) -> str:
         """The standing instruction for the marker check, or "" when it is off (tier 2)."""
         m = self.recall.policy.marker
@@ -203,12 +226,16 @@ class Session:
                 turn=turn,
             )
             alert = self.recall.record(r)
+            if r.score is not None and r.score >= self.recall.policy.pass_at:
+                self.handoff_pending = False  # recall recovered: no need to restart
             self.store.add_event(
                 self.session_id,
                 "recall",
                 {**r.to_dict(), "rolling": self.recall.rolling, "alert": alert},
             )
             log.info("recall", turn=turn, score=r.score, missed=len(r.missed), alert=alert)
+            if alert and self.recall.policy.action == "handoff":
+                self.handoff_pending = True
             if alert and self._on_alert:
                 self._on_alert(r)
         except Exception as exc:  # a probe must never break the agent

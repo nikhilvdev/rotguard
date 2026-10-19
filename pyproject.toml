@@ -9,10 +9,14 @@ dependencies = [
     "pydantic>=2",
 ]
 
+[project.scripts]
+rotguard = "rotguard.cli.main:main"
+
 [project.optional-dependencies]
 langchain = ["langchain>=1.0"]
 anthropic = ["anthropic"]
 openai = ["openai"]
+mcp = ["mcp>=2"]
 eval = ["anthropic", "openai"]
 
 [dependency-groups]
@@ -24,6 +28,7 @@ dev = [
     "mypy>=2.4.0",
     "pre-commit>=4.6.2",
 ]
+docs = ["mkdocs-material"]
 
 [build-system]
 requires = ["hatchling"]

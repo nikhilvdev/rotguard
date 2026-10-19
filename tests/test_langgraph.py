@@ -1,4 +1,4 @@
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from test_langchain import FakeChat
@@ -86,3 +86,24 @@ def test_recall_needs_a_model_and_probes_each_pass_through_the_node():
     )
     ev = rg.store.events(rg.session_id, "recall")
     assert len(ev) == 1 and ev[0]["asked"]
+
+
+def test_node_returns_a_replacement_history_when_a_handoff_is_pending():
+    from langchain_core.messages import RemoveMessage
+
+    from rotguard.probes import RecallPolicy
+
+    rg = RotguardGraph(model=FakeChat(), recall=RecallPolicy(action="handoff", handoff_keep=1))
+    rg.ledger.record("constraint", "only write to staging_orders", key="table")
+    msgs = [
+        HumanMessage(content="first", id="m1"),
+        AIMessage(content="ok", id="m2"),
+        HumanMessage(content="latest", id="m3"),
+    ]
+    assert "messages" not in rg.node({"messages": msgs})  # nothing pending
+    rg.session.handoff_pending = True
+    update = rg.node({"messages": msgs})["messages"]
+    assert isinstance(update[0], RemoveMessage)
+    assert [m.id for m in update[1:]] == ["handoff-ledger", "m3"]
+    assert "staging_orders" in update[1].content
+    assert "messages" not in rg.node({"messages": msgs})  # one-shot

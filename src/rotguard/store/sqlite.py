@@ -104,6 +104,16 @@ class SQLiteStore:
             for r in self._run(sql + " ORDER BY ts", tuple(args)).fetchall()
         ]
 
+    def sessions(self) -> list[str]:
+        """Every session id in the store: those with items first, then event-only ones."""
+        out: list[str] = []
+        for sql in (
+            "SELECT session FROM items GROUP BY session ORDER BY MIN(seq)",
+            "SELECT session FROM events GROUP BY session ORDER BY MIN(ts)",
+        ):
+            out += [r["session"] for r in self._run(sql).fetchall() if r["session"] not in out]
+        return out
+
     def close(self) -> None:
         with self._lock:
             self._db.close()

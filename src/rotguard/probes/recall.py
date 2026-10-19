@@ -31,6 +31,8 @@ class RecallPolicy:
     window: int = 5  # probes in the rolling score
     seed: int | None = None
     background: bool = True
+    action: Literal["log", "handoff"] = "log"  # on alert: log only, or restart the context
+    handoff_keep: int = 4  # messages kept verbatim by a handoff
     signals: bool = True  # tier 1: passive signals force a probe when they flag
     marker: str | None = None  # tier 2: ask the model to begin replies with this; a miss forces one
 

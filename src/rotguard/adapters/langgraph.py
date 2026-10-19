@@ -23,12 +23,14 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import AnyMessage, HumanMessage
+from langchain_core.messages import AnyMessage, HumanMessage, RemoveMessage
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from typing_extensions import TypedDict
 
 from rotguard.adapters.langchain import (
     LEDGER_MESSAGE_NAME,
     LangChainCaller,
+    from_neutral,
     make_ledger_tool,
     to_neutral_list,
 )
@@ -79,13 +81,21 @@ class RotguardGraph:
         if not self.ledger.all() and saved:  # resumed from a checkpoint
             self.ledger.load([Entry(**e) for e in saved])
         self.session.turn += 1
-        self.session.observe_history(to_neutral_list(state["messages"]))
+        neutral = to_neutral_list(state["messages"])
+        self.session.observe_history(neutral)
         if self.model is not None:
             self.session.run_pending(
                 LangChainCaller(self.model), self.ledger.render() if self.inject_ledger else ""
             )
         current = [e.model_dump() for e in self.ledger.all()]
-        return {"rotguard_ledger": current} if current != saved else {}
+        update: dict[str, Any] = {"rotguard_ledger": current} if current != saved else {}
+        fresh = self.session.take_handoff(neutral)
+        if fresh is not None:  # RecallPolicy(action="handoff") and an alert fired
+            update["messages"] = [
+                RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                *[from_neutral(m) for m in fresh],
+            ]
+        return update
 
     def with_ledger(self, messages: list[AnyMessage]) -> list[AnyMessage]:
         """`messages` plus the active ledger at the end, for this model call only."""

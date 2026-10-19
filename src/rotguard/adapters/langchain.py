@@ -19,7 +19,15 @@ from typing import Any, Literal
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.tools import tool
-from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from rotguard.core import Message, Provenance, TextBlock, ToolCallBlock, ToolResultBlock
 from rotguard.ledger import Entry, Ledger
@@ -235,7 +243,16 @@ class RotguardMiddleware(AgentMiddleware):
     @_failopen
     def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         self.session.turn += 1
-        self.session.observe_history(to_neutral_list(state["messages"]))
+        neutral = to_neutral_list(state["messages"])
+        self.session.observe_history(neutral)
+        fresh = self.session.take_handoff(neutral)
+        if fresh is not None:  # RecallPolicy(action="handoff") and an alert fired
+            return {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    *[from_neutral(m) for m in fresh],
+                ]
+            }
         return None
 
     def _save_entry(self, entry: Entry) -> None:
@@ -281,8 +298,8 @@ class RotguardMiddleware(AgentMiddleware):
         return None
 
     async def abefore_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        self.before_model(state, runtime)
-        return None
+        result: dict[str, Any] | None = self.before_model(state, runtime)
+        return result
 
     async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         self.after_model(state, runtime)

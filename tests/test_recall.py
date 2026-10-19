@@ -139,3 +139,14 @@ def test_calibrate_sits_just_under_clean_performance():
     assert calibrate([1.0] * 8) < 1.0 <= calibrate([1.0] * 8) + 1e-6
     assert calibrate([0.0, 0.0, 0.0, 1.0]) == 0.3  # floor
     assert 0.6 < calibrate([0.7, 0.7, 0.7, 1.0, 1.0, 1.0, 1.0, 1.0]) <= 0.7
+
+
+def test_a_passing_probe_cancels_a_pending_handoff():
+    ledger = Ledger()
+    ledger.record("constraint", "Never write to prod_orders.")
+    policy = RecallPolicy(mode="every", every=1, background=False, signals=False, action="handoff")
+    s = Session(SQLiteStore(), "s", ledger, recall=policy)
+    s.handoff_pending = True
+    s.turn = 1
+    s.run_recall_check(ctx("never write to prod_orders"), FakeCaller([], {}, ["prod_orders"]))
+    assert s.handoff_pending is False

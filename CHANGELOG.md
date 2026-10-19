@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Phase 4 (pre-release, in progress): CLI and MCP server.
+  - `rotguard` command (`sessions`, `report`, `blame`, `replay`, `mcp`) and `python -m rotguard.cli`.
+  - `report`: one self-contained HTML page per session (recall curve with compactions marked,
+    compaction and audit tables, ledger timeline); all stored text is escaped.
+  - `replay`: rebuilds each turn's context from a saved session and re-runs only rotguard's side
+    calls (audit, recall probes) under another model or policy (`--model anthropic|openai|ollama:`,
+    `--audit`, `--recall-every`, `--pass-at`, `--inject-ledger`); the agent's own calls are not
+    re-run. The source trace is untouched; results go to a new session.
+  - `rotguard.adapters.mcp` (`rotguard[mcp]`, needs `mcp>=2`): tools `ledger_record`, `recall`,
+    `blame`, `report` over stdio. The agent loads the ledger at start, so entries added here reach
+    it on its next run.
+  - `SQLiteStore.sessions()`.
+  - Fresh-context handoff (F7): `rotguard.handoff.handoff` builds system messages, a ledger note
+    and the last `keep` messages, widened so the tail starts on a user message and every tool
+    result keeps its call. `RecallPolicy(action="handoff", handoff_keep=)`: when an alert fires,
+    `RotguardMiddleware` and `RotguardGraph` replace the history on the next model call (the only
+    place rotguard rewrites stored history, and opt-in). It waits while it would not shrink the
+    context, and a passing probe cancels it. The Anthropic and OpenAI wrappers do not own the
+    history; call `session.take_handoff(context)` and replace it yourself.
+  - Tests: 99 pass (78 before Phase 4), ruff and strict mypy clean. The stdio server was checked
+    with a raw `initialize` and `tools/list` exchange. The provider callers (`anthropic`, `openai`,
+    `ollama`) are not exercised by tests; only their message shaping is.
+  - Docs: a MkDocs Material site in `docs/` (home, quickstart, audit, recall and handoff, CLI and
+    MCP, evaluation), built with `uv sync --group docs && uv run mkdocs build --strict`. The
+    Evaluation page restates the measured results and says Gate 3 is unmet. Install instructions say
+    "from source" because the package is not on PyPI.
+  - Not done: benchmark report and launch posts. Gate 3 is
+    not met (see Phase 3), so the early-warning claim must not be in launch material.
+
 - Phase 3 (pre-release): recall checks.
   - `rotguard.probes.recall`: tier 3 recall probes. Every `every` turns a side call over the
     context the agent would use asks the model to restate sampled active ledger entries, graded
@@ -28,6 +57,10 @@ All notable changes to this project are documented in this file.
     summary); ruff, ruff format and strict mypy are clean. All tests use fake models. The Agents
     SDK wrapper is tested against a fake session, not the real SDK. Gate 3 on a real model: see
     `rotguard.md` 10.2.
+  - Gate 3, first run (qwen2.5 3B, `holdout`, 30 turns, 1 seed, 9 scenarios): not met. The recall
+    score before any compaction averaged 0.11, so the alert fired at turn 1 in 8 of 9 runs; 3 of 9
+    task probes failed before any compaction. The probe is not usable on this model as it stands,
+    and the "lead over task failure" is not evidence of early warning. No hosted-model run yet.
 
 - Audit hardening after Phase 2 (uncommitted work on top of PR #2):
   - Long extracted answers are graded on their distinctive tokens (identifiers and numbers), not
