@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- License changed from MIT to the PolyForm Noncommercial License 1.0.0 (`LICENSE`, `pyproject.toml`
+  SPDX metadata, README, CONTRIBUTING). Noncommercial use is free; commercial use needs a separate
+  license. This is a source-available license, not an OSI open source one. Copies already obtained
+  under MIT keep MIT.
+
 - Phase 4 (pre-release, in progress): CLI and MCP server.
   - `rotguard` command (`sessions`, `report`, `blame`, `replay`, `mcp`) and `python -m rotguard.cli`.
   - `report`: one self-contained HTML page per session (recall curve with compactions marked,

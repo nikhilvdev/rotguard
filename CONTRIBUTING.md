@@ -41,6 +41,12 @@ uv run python -m evals.rescore evals/results/<run>.jsonl   # re-score stored rep
 - **Squash-merge** into `main`. Commit messages and PR titles are imperative: "Add rotating store",
   not "Added".
 
+## Licensing of contributions
+
+rotguard is under the [PolyForm Noncommercial License 1.0.0](LICENSE). By opening a pull request you
+confirm that you wrote the change (or have the right to submit it) and that it may be distributed
+under that license, and under other licenses the maintainer offers, including commercial ones.
+
 ## Reporting issues
 
 Bug reports and feature requests are welcome via GitHub issues. For security issues, see

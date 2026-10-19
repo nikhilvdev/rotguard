@@ -3,6 +3,8 @@ name = "rotguard"
 version = "0.0.0"
 description = "Measure and guard against context rot in LLM agents (context rot, compaction, LangChain)."
 readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "logquill>=1.0.0",
