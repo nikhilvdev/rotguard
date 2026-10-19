@@ -225,3 +225,5 @@ evals/results/*
 rotguard.md
 # Claude Code project notes: kept local, never committed
 CLAUDE.md
+.claude
+graphify-out/

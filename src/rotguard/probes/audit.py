@@ -117,6 +117,10 @@ def run_audit(
     (or None) even though the cumulative loss is high.
     """
     span = extract_facts(removed, caller, max_facts)
+    # Small models fill the list with tool-output listings, which `loss` ignores anyway and which
+    # crowd out the user-stated facts a later step depends on. Keep one so tool loss still shows.
+    tool = [f for f in span if f.origin_kind == "tool"]
+    span = [f for f in span if f.origin_kind != "tool"] + tool[:1]
     calls = 1 if removed and max_facts > 0 else 0
     if cloze and len(span) < max_facts:
         span += cloze_facts(

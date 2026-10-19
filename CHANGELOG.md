@@ -23,6 +23,11 @@ All notable changes to this project are documented in this file.
   - Not fixed: coverage. The audit never checked the probed fact in 5 of the 3B's 13 failures
     on the second held-out set, and in 11 of the 1.5B's 24. Nine templates, three seeds each: the
     effective sample is nine, so the p-values are optimistic.
+  - Coverage: `run_audit` keeps at most one tool-origin fact, so small models no longer spend the
+    fact slots on tool listings and the cloze fallback can fill them. qwen2.5 3B, 30 turns, 3 seeds,
+    `holdout` + `holdout2` (54 scenarios, one run per cell): probed fact checked in 39 of 54 (was
+    33), AUC 0.96 over 35 scored (was 0.90 over 31). These suites informed this change, so they are
+    no longer clean held-out sets.
   - `evals`: two held-out suites (`holdout`, `holdout2`, selected by name only), `--cloze`,
     `ROTGUARD_OPENAI_API_KEY` for hosted runs (a placeholder `OPENAI_API_KEY` is rejected).
 

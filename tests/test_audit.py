@@ -268,6 +268,34 @@ def test_cloze_fallback_covers_for_an_extractor_that_returns_nothing():
     assert both.facts_total == 1
 
 
+def test_tool_facts_are_capped_so_user_facts_get_the_slots():
+    from rotguard.probes.quiz import cloze_facts
+
+    removed = [
+        msg("t1", "[tool result] listing of build/ with 87 entries", role="tool", kind="tool"),
+        msg("t2", "[tool result] grep for handle_request in 41 files", role="tool", kind="tool"),
+        msg("u", "Use port 8443 for the internal gateway."),
+    ]
+    extract = [
+        {"question": "What was listed?", "answer": "listing of build/ with 87 entries"},
+        {"question": "What was grepped?", "answer": "grep for handle_request in 41 files"},
+    ]
+    cloze = cloze_facts(removed, 1)[0]
+    qa = {"What was listed?": "87", "What was grepped?": "41", cloze.question: "8443"}
+    new = [msg("s", "Summary.", kind="summary")]
+    rep = run_audit(
+        old=removed,
+        new=new,
+        removed=removed,
+        entries=[],
+        caller=FakeCaller(extract, qa),
+        max_facts=3,
+        cloze=2,
+    )
+    kinds = [c["origin_kind"] for c in rep.checked]
+    assert kinds.count("tool") == 1 and "user" in kinds  # one tool fact, the cloze fact fits
+
+
 def test_short_answers_match_whole_tokens_only():
     from rotguard.probes.quiz import Fact, contains, is_correct
 
