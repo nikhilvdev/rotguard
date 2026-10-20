@@ -1,4 +1,5 @@
-"""Gate 1: does the ledger help? Each strategy with and without `+ledger`, on the suites that test it.
+"""Gate 1: does the ledger help? Each strategy with and without `+ledger`, on the suites
+that test it.
 
     uv run python -m evals.gate1 --model anthropic:claude-haiku-5-5 --seeds 3
     uv run python -m evals.gate1 --model mock --estimate        # count calls first, spend nothing
