@@ -43,9 +43,10 @@ uv run python -m evals.rescore evals/results/<run>.jsonl   # re-score stored rep
 
 ## Licensing of contributions
 
-rotguard is under the [PolyForm Noncommercial License 1.0.0](LICENSE). By opening a pull request you
-confirm that you wrote the change (or have the right to submit it) and that it may be distributed
-under that license, and under other licenses the maintainer offers, including commercial ones.
+rotguard is dual-licensed: [GNU AGPL-3.0](LICENSE) for everyone, and a commercial license from the
+maintainer. By opening a pull request you confirm that you wrote the change (or have the right to
+submit it) and that it may be distributed under the AGPL-3.0 and under the commercial license the
+maintainer offers. If you can't agree to that, please open an issue before sending code.
 
 ## Reporting issues
 

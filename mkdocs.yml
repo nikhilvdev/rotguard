@@ -11,7 +11,9 @@ nav:
   - Quickstart: quickstart.md
   - Audit a compaction: audit.md
   - Recall checks and handoff: recall.md
+  - Policies: policies.md
   - CLI and MCP: cli.md
+  - Telemetry, storage and schemas: advanced.md
   - Evaluation: evaluation.md
 markdown_extensions:
   - admonition

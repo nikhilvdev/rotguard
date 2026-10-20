@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from rotguard.store import SQLiteStore
+from rotguard.store import Store
 
 
 def _norm(s: str) -> str:
@@ -19,7 +19,7 @@ class Diff:
     rewritten: dict[str, list[str]] = field(default_factory=dict)  # summary id -> items it replaced
 
 
-def diff(store: SQLiteStore, session: str, turn_a: int, turn_b: int) -> Diff:
+def diff(store: Store, session: str, turn_a: int, turn_b: int) -> Diff:
     a, b = set(store.snapshot_at(session, turn_a)), store.snapshot_at(session, turn_b)
     items = {i["id"]: i for i in store.items(session)}
     added = [i for i in b if i not in a]
@@ -39,7 +39,7 @@ class Blame:
     ancestors: list[str]  # source items reached by walking summary parents
 
 
-def blame(store: SQLiteStore, session: str, text: str) -> Blame:
+def blame(store: Store, session: str, text: str) -> Blame:
     items = store.items(session)
     by_id = {i["id"]: i for i in items}
     q = _norm(text)

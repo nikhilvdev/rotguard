@@ -74,3 +74,28 @@ def test_widens_for_a_tool_call_when_no_user_message_precedes_it():
 def test_keep_larger_than_history_returns_everything():
     msgs = [text("u1", "user"), text("a1", "assistant")]
     assert ids(handoff(msgs, Ledger(), keep=50)) == ["u1", "a1"]
+
+
+def test_history_integrity_flags_orphans_but_allows_a_pending_call():
+    import pytest
+
+    from rotguard.testing import assert_history_integrity, broken_pairs
+
+    ok = [text("u", "user"), call("a", "c1"), result("t", "c1"), text("a2", "assistant")]
+    assert_history_integrity(ok)
+    assert_history_integrity([text("u", "user"), call("a", "c1")])  # result not produced yet
+    assert broken_pairs([result("t", "c9")]) == ["tool result 'c9' has no earlier tool call"]
+    with pytest.raises(AssertionError, match="'c1' has no result"):
+        assert_history_integrity([call("a", "c1"), text("u", "user")])
+    # a handoff never produces a broken history
+    msgs = [
+        text("u1", "user"),
+        call("a1", "c1"),
+        result("t1", "c1"),
+        text("u2", "user"),
+        call("a2", "c2"),
+        result("t2", "c2"),
+        text("a3", "assistant"),
+    ]
+    for keep in range(1, 8):
+        assert_history_integrity(handoff(msgs, Ledger(), keep=keep))

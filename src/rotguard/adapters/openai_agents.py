@@ -24,7 +24,7 @@ from rotguard.ledger import Ledger
 from rotguard.log import get_logger
 from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult
 from rotguard.session import Session
-from rotguard.store import SQLiteStore
+from rotguard.store import Store, open_store
 
 log = get_logger(__name__)
 
@@ -84,7 +84,7 @@ class RotguardSession:
         inner: Any,
         client: Any,
         model: str,
-        store: SQLiteStore | str | None = None,
+        store: Store | str | None = None,
         session_id: str | None = None,
         audit: AuditPolicy | None = None,
         recall: RecallPolicy | None = None,
@@ -93,7 +93,7 @@ class RotguardSession:
     ):
         self._inner = inner
         self.session_id = session_id or getattr(inner, "session_id", None) or uuid.uuid4().hex
-        self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
+        self.store = open_store(store)
         self.ledger = Ledger(
             on_change=lambda e: self.store.upsert_entry(self.session_id, e.model_dump())
         )

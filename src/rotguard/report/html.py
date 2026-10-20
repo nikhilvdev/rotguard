@@ -5,10 +5,10 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from rotguard.store import SQLiteStore
+from rotguard.store import Store
 
 
-def build(store: SQLiteStore, session: str) -> dict[str, Any]:
+def build(store: Store, session: str) -> dict[str, Any]:
     """Everything the report shows, as plain data (also what the MCP `report` tool returns)."""
     ev = store.events(session)
 
@@ -25,6 +25,8 @@ def build(store: SQLiteStore, session: str) -> dict[str, Any]:
                 "score": e["score"],
                 "alert": e.get("alert", False),
                 "missed": e["missed"],
+                "stale": e.get("stale", []),
+                "target": e.get("target", "ledger"),
                 "rolling": e.get("rolling"),
             }
             for e in of("recall")
@@ -127,6 +129,17 @@ def render_html(data: dict[str, Any]) -> str:
         [e["turn"], e["kind"], e["status"], e["text"], e.get("superseded_by") or ""]
         for e in data["ledger"]
     ]
+    probes_table = [
+        [
+            p["turn"],
+            p["target"],
+            "n/a" if p["score"] is None else f"{p['score']:.2f}",
+            ", ".join(p["missed"]),
+            ", ".join(p["stale"]),
+            "ALERT" if p["alert"] else "",
+        ]
+        for p in data["recall"]
+    ]
     comp = [
         [c["turn"], c["channel"], c["removed"], c["rewritten"], c["chars_before"], c["chars_after"]]
         for c in data["compactions"]
@@ -153,7 +166,8 @@ def render_html(data: dict[str, Any]) -> str:
         f"<h1>rotguard report</h1><p class=muted>session {escape(data['session'])}<br>"
         f"{escape(summary)}</p>"
         f"<h2>Recall curve</h2>{_curve(data)}"
-        "<h2>Compactions</h2>"
+        + _table(["turn", "asked about", "score", "missed", "stale", ""], probes_table)
+        + "<h2>Compactions</h2>"
         + _table(["turn", "channel", "removed", "rewritten", "chars before", "chars after"], comp)
         + "<h2>Audits</h2>"
         + _table(["turn", "loss", "facts", "lost", "suggestions"], aud)

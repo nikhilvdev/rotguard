@@ -6,7 +6,7 @@ rotguard does not compact your context. It watches whatever does, keeps a **ledg
 decisions and constraints that must survive, records where every item in the context came from, and
 can check what a compaction lost.
 
-> **Status: pre-release (`0.0.0`), not on PyPI.** The ledger, provenance and compaction audit are
+> **Status: pre-release (`0.1.0a1`), not on PyPI yet.** The ledger, provenance and compaction audit are
 > built and tested. Recall checks are built but have **not** been shown to warn before a task fails
 > (see [Evaluation](#evaluation)). Nothing has been run on a hosted model yet.
 
@@ -36,7 +36,8 @@ rotguard answers three questions:
 | [Ledger](#the-ledger) | Goals, decisions, constraints with supersession; shown per call, never stored in history | Free | Tested |
 | [Provenance](#provenance-diff-and-blame) | `diff` and `blame` across compactions | Free | Tested |
 | [Compaction audit](#audit-what-a-compaction-lost) | Which facts did a compaction lose? Per-fact verdicts and suggestions | About 3 side calls | Useful as a debugging aid |
-| [Recall checks](#recall-checks) | Periodic probes that ask the model to restate ledger entries; alert on repeated misses | 1 side call per probe | **Experimental** |
+| [Recall checks](#recall-checks) | Periodic fill-in-the-blank probes about the ledger or the conversation; alert on repeated misses | 1 side call per probe | **Experimental** |
+| [Policies](#policies) | Offload large tool outputs, dedup repeats, pin messages, staged cleanup, optional ledger extractor | Free (summaries cost a call) | **Experimental**, LangChain only |
 | [Handoff](#fresh-context-handoff) | Restart the context from the system prompt, the ledger and the last few messages | Free | **Experimental** |
 | [CLI](#command-line) | HTML report, `blame`, replay a trace under another model | Replay: side calls | Tested |
 | [MCP server](#mcp-server) | `ledger_record`, `recall`, `blame`, `report` for MCP clients | Free | Tested |
@@ -98,6 +99,7 @@ model request, and compactions by any middleware are detected and stored with pr
 | Recall checks | Yes | Yes (pass `model=`) | Yes | Yes |
 | Marker check | Yes | Yes (`rg.observe_reply`) | No | No |
 | Handoff | Automatic | Automatic (in the node) | Manual (`session.take_handoff`) | Manual |
+| Policies (offload, dedup, pin, staged cleanup, extractor) | Yes | No | No | No |
 
 - **LangGraph:** add `rg.node` before your LLM node and mix `RotguardState` into your state, so the
   ledger is checkpointed and a resumed thread in a new process loads it back. See
@@ -130,7 +132,7 @@ are never written into your stored history.
 from rotguard.report import blame, diff
 
 blame(rotguard.store, rotguard.session_id, "staging_orders")  # which message introduced it?
-diff(rotguard.store, rotguard.session_id, 3, 5)               # what changed between turns 3 and 5?
+diff(rotguard.store, rotguard.session_id, 3, 5)  # what changed between turns 3 and 5?
 ```
 
 `blame` finds the earliest original items containing the text, the summaries that still carry it,
@@ -170,8 +172,12 @@ about 28% of scenarios. Side calls are never written to history. See [docs/audit
 
 ## Recall checks
 
-Every few turns, a side call asks the model to restate some active ledger entries. A miss means it
-may no longer hold that constraint. Off by default.
+Every few turns, one side call asks the model fill-in-the-blank questions about facts it was given
+("Complete the constraint currently in effect: Only write to ____."). A miss means it may no longer
+hold that fact. When the ledger is shown to the model on every call, the probe asks about facts from
+the conversation that the ledger does not cover (the model could always answer from the ledger);
+otherwise it asks about the ledger. An answer that gives a replaced value counts as a miss. Off by
+default.
 
 ```python
 from rotguard.probes import RecallPolicy
@@ -189,6 +195,16 @@ flagging makes the next probe run now. One miss is noise: an alert fires once, a
 failed probes in a row. `rotguard.probes.calibrate` picks a per-model `pass_at` from clean-context
 scores. **Not yet shown to warn early**; see [Evaluation](#evaluation) and
 [docs/recall.md](docs/recall.md).
+
+## Policies
+
+Opt-in, LangChain middleware only, and each keeps tool calls paired with their results:
+`OffloadPolicy` (store large tool outputs, leave a stub, read back with `recall_output`),
+`DedupPolicy` (collapse repeated outputs for one call), pinning (`rotguard.pin(id)`, or
+`ledger_record(pin=True)`), `StagedCleanup` (clear old tool outputs first, summarize only if still over
+budget), and `LedgerExtractor` (propose ledger entries from each reply, validated against the
+conversation). Offload and staged cleanup rewrite stored history; nothing is deleted. See
+[docs/policies.md](docs/policies.md).
 
 ## Fresh-context handoff
 
@@ -239,9 +255,10 @@ optimistic. Details and caveats: [docs/evaluation.md](docs/evaluation.md) and `C
 | Does its verdict on the one probed fact? | **As a flag, yes.** "Kept": 0 of 13 failed; "lost": 10 of 23 failed |
 | Held-out check after fixes (3B, 9 new templates) | AUC 0.90 over 18 scored; "kept" 0 of 8 failed |
 | Does the audit check the fact that matters? | In 39 of 54 scenarios; the suites that informed this are no longer clean held-out sets |
-| **Do recall probes fail before the task does?** | **Not shown.** First run (3B, 9 scenarios): the probe failed even on clean contexts (mean score 0.11), so the alert fired at turn 1 in 8 of 9 runs |
+| Does the recall probe work on a clean context? | **Yes after a redesign** (3B, 9 scenarios, 1 seed): 0.82, up from 0.03 for the old single question; 0 false alarms in 6 control runs |
+| **Do recall probes fail before the task does?** | **No.** The alert came at or after the task failure in 7 of 8 failing runs (median lead -1 turn); one run had a 10-turn lead |
 
-Not done: any hosted-model run (Anthropic or OpenAI) and the plan's baselines on two models.
+Not done: any hosted-model run (Anthropic or OpenAI), the plan's baselines on two models, and evaluating the `history` probe target (the harness's oracle ledger leaves nothing for it to ask).
 
 ## Design rules
 
@@ -253,7 +270,7 @@ Not done: any hosted-model run (Anthropic or OpenAI) and the plan's baselines on
 
 ## Project status
 
-The project plan (kept locally, not in this repository) has five phases, each ending in a gate.
+The project is built in five phases, each ending in a gate.
 
 | Phase | Status |
 | --- | --- |
@@ -297,14 +314,20 @@ to see it. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and
 
 ## License
 
-rotguard is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+rotguard is dual-licensed:
 
-In plain terms: you may use, modify and share it for **noncommercial** purposes, which includes
-personal use, hobby projects, research, education, and use by charities, schools and similar
-organizations. **Commercial use is not permitted under this license.** If you want to use rotguard
-commercially, you need a separate license: open an issue at
-[github.com/nikhilvdev/rotguard/issues](https://github.com/nikhilvdev/rotguard/issues).
+1. **Open source: [GNU AGPL-3.0](LICENSE)** (`AGPL-3.0-only`). Anyone may use, modify and share it.
+   If you modify rotguard, or build it into software you distribute or run as a network service, the
+   AGPL requires you to make the corresponding source available under the same license.
+2. **Commercial license.** If you can't or don't want to comply with the AGPL, for example in a
+   proprietary product or a hosted service whose source you will not release, you can get a
+   commercial license from the author: open an issue at
+   [github.com/nikhilvdev/rotguard/issues](https://github.com/nikhilvdev/rotguard/issues).
 
-This is a source-available license, not an OSI-approved open source license. The summary above is
-not legal advice and the [LICENSE](LICENSE) file is what governs. Copies of rotguard obtained under
-the MIT license that the project carried earlier remain under MIT for the people who received them.
+The AGPL's source-sharing duties arise when you distribute rotguard or offer a modified version to
+users over a network; running it privately, for example to test or debug your own agents, generally
+does not trigger them. Whether a particular product is covered is a legal question, and this
+summary is not legal advice; the [LICENSE](LICENSE) file is what governs.
+
+Earlier copies of rotguard that were published under the MIT or the PolyForm Noncommercial license
+stay under those terms for the people who received them.

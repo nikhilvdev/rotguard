@@ -18,6 +18,7 @@ class Entry(BaseModel):
     superseded_by: str | None = None
     source_message_id: str | None = None
     turn: int = 0
+    origin: Literal["tool", "manual", "extractor"] = "manual"  # who added it
 
 
 HEADER = (
@@ -51,6 +52,7 @@ class Ledger:
         supersedes: str | None = None,
         source_message_id: str | None = None,
         turn: int = 0,
+        origin: Literal["tool", "manual", "extractor"] = "manual",
     ) -> Entry:
         if supersedes is not None and supersedes not in self._entries:
             raise ValueError(f"unknown ledger entry to supersede: {supersedes}")
@@ -61,6 +63,7 @@ class Ledger:
             key=key,
             source_message_id=source_message_id,
             turn=turn,
+            origin=origin,
         )
         for old in self.active():
             if old.id == supersedes or (key is not None and old.key == key):

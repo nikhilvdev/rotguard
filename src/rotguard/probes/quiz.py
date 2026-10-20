@@ -99,6 +99,7 @@ class Fact:
     need: int = 1
     origin_id: str | None = None
     origin_kind: str | None = None
+    stale: list[str] = field(default_factory=list)  # tokens of the entries this one replaced
 
 
 def ledger_facts(entries: list[Entry]) -> list[Fact]:
@@ -260,21 +261,26 @@ def parse_numbered(reply: str, count: int) -> list[str] | None:
     return ["\n".join(parts[i]) for i in range(1, count + 1)]
 
 
-def grade(facts: list[Fact], with_ledger: bool, reply: str) -> dict[str, bool]:
-    """Which facts did this reply get right? Uses per-question segments when it can."""
+def reply_segments(facts: list[Fact], with_ledger: bool, reply: str) -> dict[str, str]:
+    """The part of `reply` that answers each fact: its numbered line, or the whole reply."""
     span = [f for f in facts if f.source == "span"]
     count = len(span) + (1 if with_ledger else 0)
     segments = parse_numbered(reply, count) if count else None
-    out: dict[str, bool] = {}
+    out: dict[str, str] = {}
     for f in facts:
         if segments is None:
-            text = reply
+            out[f.id] = reply
         elif f.source == "ledger":
-            text = segments[0]
+            out[f.id] = segments[0]
         else:
-            text = segments[span.index(f) + (1 if with_ledger else 0)]
-        out[f.id] = is_correct(f, text)
+            out[f.id] = segments[span.index(f) + (1 if with_ledger else 0)]
     return out
+
+
+def grade(facts: list[Fact], with_ledger: bool, reply: str) -> dict[str, bool]:
+    """Which facts did this reply get right? Uses per-question segments when it can."""
+    text = reply_segments(facts, with_ledger, reply)
+    return {f.id: is_correct(f, text[f.id]) for f in facts}
 
 
 # --- cloze facts: a fallback that needs no model to extract ---------------------------------
@@ -321,4 +327,87 @@ def cloze_facts(removed: list[Message], n: int, skip: set[str] | None = None) ->
             )
             if len(facts) == n:
                 return facts
+    return facts
+
+
+# --- cued ledger questions: one pointed question per entry ----------------------------------
+
+
+def _blank(text: str, token: str) -> str:
+    return re.sub(re.escape(token), "____", text, flags=re.IGNORECASE)
+
+
+def _replaced_tokens(entry: Entry, entries: list[Entry]) -> list[str]:
+    """Tokens that appear in the entries `entry` replaced (directly or through a chain) but not in
+    `entry` itself: an answer containing one of them is a stale belief."""
+    replaced: dict[str, list[Entry]] = {}
+    for e in entries:
+        if e.superseded_by:
+            replaced.setdefault(e.superseded_by, []).append(e)
+    now, out, seen, stack = norm(entry.text), [], set(), list(replaced.get(entry.id, []))
+    while stack:
+        old = stack.pop()
+        if old.id in seen:
+            continue
+        seen.add(old.id)
+        stack.extend(replaced.get(old.id, []))
+        for t in fact_tokens(old.text)[0]:
+            if t not in out and not contains(now, t):
+                out.append(t)
+    return out
+
+
+def cued_ledger_facts(entries: list[Entry]) -> list[Fact]:
+    """One fill-in-the-blank question per active entry, asking for the entry's key token.
+
+    Free recall ("list everything") makes a model leave things out even when they are in its
+    context; a pointed question per entry does not. Every occurrence of the blanked token is
+    removed from the question, so it cannot leak the answer. `entries` should hold the whole
+    ledger, superseded entries included: they feed stale-belief detection.
+    """
+    facts: list[Fact] = []
+    generic_used = False
+    for e in entries:
+        if e.status != "active":
+            continue
+        stale = _replaced_tokens(e, entries)
+        ids = [m for m in _ID.findall(e.text) if len(norm(m)) >= 2]
+        token = ids[0] if ids else None
+        if token is None and e.kind == "goal" and not generic_used:
+            toks, need = fact_tokens(e.text)
+            if toks:  # one open goal question is unambiguous; a second would not be
+                generic_used = True
+                facts.append(
+                    Fact(
+                        f"cued:{e.id}",
+                        "span",
+                        e.text,
+                        "What is the current goal of this task?",
+                        tokens=toks,
+                        need=need,
+                        origin_id=e.source_message_id,
+                        origin_kind="ledger",
+                        stale=stale,
+                    )
+                )
+                continue
+        if token is None:
+            words = sorted(
+                {w for w in _WORD.findall(e.text) if w.lower() not in _STOP},
+                key=lambda w: (-len(w), w),
+            )
+            token = words[0] if words else None
+        if token is None:
+            continue
+        facts.append(
+            Fact(
+                f"cued:{e.id}",
+                "span",
+                token,
+                f"Complete the {e.kind} currently in effect: {_blank(e.text, token)}",
+                origin_id=e.source_message_id,
+                origin_kind="ledger",
+                stale=stale,
+            )
+        )
     return facts

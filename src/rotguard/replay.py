@@ -15,7 +15,7 @@ from rotguard.core import Message, Provenance, TextBlock
 from rotguard.ledger import Entry, Ledger
 from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult, SideCaller
 from rotguard.session import Session
-from rotguard.store import SQLiteStore
+from rotguard.store import SQLiteStore, Store
 
 
 def _message(row: dict) -> Message:  # type: ignore[type-arg]
@@ -34,16 +34,16 @@ def _message(row: dict) -> Message:  # type: ignore[type-arg]
 
 
 def replay(
-    src: SQLiteStore,
+    src: Store,
     session: str,
     caller: SideCaller,
     *,
     audit: AuditPolicy | None = None,
     recall: RecallPolicy | None = None,
     inject_ledger: bool = False,
-    dst: SQLiteStore | None = None,
+    dst: Store | None = None,
     on_alert: Callable[[RecallResult], None] | None = None,
-) -> tuple[SQLiteStore, str]:
+) -> tuple[Store, str]:
     """Replay `session`; returns the store holding the new events and the new session id.
 
     Audits always run inline here (a replay is a batch job), whatever the policy says.

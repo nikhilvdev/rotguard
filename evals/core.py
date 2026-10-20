@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from rotguard.ledger import Ledger
 from rotguard.log import get_logger
 
-from .models import Client, Message
+from .models import Client, Message, purpose
 
 log = get_logger("evals")
 
@@ -64,6 +64,21 @@ class Result:
     context_chars: int
     passed: bool
     reply: str
+    stale: bool = False  # the reply acted on a value that had been replaced
+
+
+def used_stale(probe: Probe, reply: str) -> bool:
+    """The reply gives a replaced value instead of the current one, or leads with it.
+
+    Mentioning the old value after the right one ("Redis, not Postgres") does not count.
+    """
+    olds = [m for p in probe.stale if (m := re.search(p, reply, re.I))]
+    if not olds:
+        return False
+    news = [m for p in probe.must if (m := re.search(p, reply, re.I))]
+    return len(news) < len(probe.must) or min(m.start() for m in olds) < min(
+        m.start() for m in news
+    )
 
 
 def score(probe: Probe, reply: str) -> bool:
@@ -96,11 +111,12 @@ def summarize(keep_last: int = 6):
     def f(history, client: Client):
         old, recent = history[:-keep_last], history[-keep_last:]
         text = "\n".join(f"{m['role']}: {m['content']}" for m in old)
-        summary = client.complete(
-            "Summarize this agent transcript so the work can continue from the summary alone.",
-            [{"role": "user", "content": text}],
-            max_tokens=500,
-        )
+        with purpose(client, "summarizer"):
+            summary = client.complete(
+                "Summarize this agent transcript so the work can continue from the summary alone.",
+                [{"role": "user", "content": text}],
+                max_tokens=500,
+            )
         return [{"role": "user", "content": f"[summary of earlier work]\n{summary}"}, *recent]
 
     return f
@@ -142,4 +158,5 @@ def run_scenario(sc: Scenario, strategy: str, client: Client) -> Result:
         context_chars=sum(len(m["content"]) for m in history),
         passed=passed,
         reply=reply,
+        stale=used_stale(sc.probe, reply),
     )

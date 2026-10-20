@@ -42,6 +42,7 @@ def fake():
         [{"question": "Which table may be written to?", "answer": "staging_orders"}],
         {"Which table may be written to?": "staging_orders"},
         ["staging_orders"],
+        ["Only write to staging_orders. <b>x</b>"],
     )
 
 

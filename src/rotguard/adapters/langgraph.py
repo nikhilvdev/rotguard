@@ -37,7 +37,7 @@ from rotguard.adapters.langchain import (
 from rotguard.ledger import Entry, Ledger
 from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult
 from rotguard.session import Session
-from rotguard.store import SQLiteStore
+from rotguard.store import Store, open_store
 
 
 class RotguardState(TypedDict, total=False):
@@ -49,7 +49,7 @@ class RotguardState(TypedDict, total=False):
 class RotguardGraph:
     def __init__(
         self,
-        store: SQLiteStore | str | None = None,
+        store: Store | str | None = None,
         session_id: str | None = None,
         audit: AuditPolicy | None = None,
         model: Any = None,
@@ -63,7 +63,7 @@ class RotguardGraph:
         ):
             if mode not in (None, "off") and model is None:
                 raise ValueError(f"{what} need the agent's model: pass model=...")
-        self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
+        self.store = open_store(store)
         self.session_id = session_id or uuid.uuid4().hex
         self.model, self.inject_ledger = model, inject_ledger
         self.ledger = Ledger(
@@ -84,9 +84,9 @@ class RotguardGraph:
         neutral = to_neutral_list(state["messages"])
         self.session.observe_history(neutral)
         if self.model is not None:
-            self.session.run_pending(
-                LangChainCaller(self.model), self.ledger.render() if self.inject_ledger else ""
-            )
+            text = self.ledger.render() if self.inject_ledger else ""
+            note = "\n".join(t for t in (text, self.session.marker_note()) if t)
+            self.session.run_pending(LangChainCaller(self.model), text, note)
         current = [e.model_dump() for e in self.ledger.all()]
         update: dict[str, Any] = {"rotguard_ledger": current} if current != saved else {}
         fresh = self.session.take_handoff(neutral)

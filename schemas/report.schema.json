@@ -1,0 +1,348 @@
+{
+  "$defs": {
+    "AuditRow": {
+      "additionalProperties": false,
+      "properties": {
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Loss"
+        },
+        "loss_all": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Loss All"
+        },
+        "facts_total": {
+          "title": "Facts Total",
+          "type": "integer"
+        },
+        "lost": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Lost",
+          "type": "array"
+        },
+        "suggestions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Suggestions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "turn",
+        "loss",
+        "loss_all",
+        "facts_total",
+        "lost",
+        "suggestions"
+      ],
+      "title": "AuditRow",
+      "type": "object"
+    },
+    "CompactionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string"
+        },
+        "removed": {
+          "title": "Removed",
+          "type": "integer"
+        },
+        "rewritten": {
+          "title": "Rewritten",
+          "type": "integer"
+        },
+        "chars_before": {
+          "title": "Chars Before",
+          "type": "integer"
+        },
+        "chars_after": {
+          "title": "Chars After",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn",
+        "channel",
+        "removed",
+        "rewritten",
+        "chars_before",
+        "chars_after"
+      ],
+      "title": "CompactionRow",
+      "type": "object"
+    },
+    "Entry": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "goal",
+            "decision",
+            "constraint",
+            "question"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "superseded"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Superseded By"
+        },
+        "source_message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Message Id"
+        },
+        "turn": {
+          "default": 0,
+          "title": "Turn",
+          "type": "integer"
+        },
+        "origin": {
+          "default": "manual",
+          "enum": [
+            "tool",
+            "manual",
+            "extractor"
+          ],
+          "title": "Origin",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text"
+      ],
+      "title": "Entry",
+      "type": "object"
+    },
+    "RecallRow": {
+      "additionalProperties": false,
+      "properties": {
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Score"
+        },
+        "alert": {
+          "title": "Alert",
+          "type": "boolean"
+        },
+        "missed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missed",
+          "type": "array"
+        },
+        "stale": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stale",
+          "type": "array"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "rolling": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rolling"
+        }
+      },
+      "required": [
+        "turn",
+        "score",
+        "alert",
+        "missed",
+        "stale",
+        "target",
+        "rolling"
+      ],
+      "title": "RecallRow",
+      "type": "object"
+    },
+    "SignalRow": {
+      "additionalProperties": false,
+      "properties": {
+        "turn": {
+          "title": "Turn",
+          "type": "integer"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "turn",
+        "reasons"
+      ],
+      "title": "SignalRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "What `rotguard.report.html.build` returns, and the MCP `report` tool.",
+  "properties": {
+    "session": {
+      "title": "Session",
+      "type": "string"
+    },
+    "items": {
+      "title": "Items",
+      "type": "integer"
+    },
+    "recall": {
+      "items": {
+        "$ref": "#/$defs/RecallRow"
+      },
+      "title": "Recall",
+      "type": "array"
+    },
+    "compactions": {
+      "items": {
+        "$ref": "#/$defs/CompactionRow"
+      },
+      "title": "Compactions",
+      "type": "array"
+    },
+    "audits": {
+      "items": {
+        "$ref": "#/$defs/AuditRow"
+      },
+      "title": "Audits",
+      "type": "array"
+    },
+    "signals": {
+      "items": {
+        "$ref": "#/$defs/SignalRow"
+      },
+      "title": "Signals",
+      "type": "array"
+    },
+    "marker_misses": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Marker Misses",
+      "type": "array"
+    },
+    "errors": {
+      "title": "Errors",
+      "type": "integer"
+    },
+    "ledger": {
+      "items": {
+        "$ref": "#/$defs/Entry"
+      },
+      "title": "Ledger",
+      "type": "array"
+    }
+  },
+  "required": [
+    "session",
+    "items",
+    "recall",
+    "compactions",
+    "audits",
+    "signals",
+    "marker_misses",
+    "errors",
+    "ledger"
+  ],
+  "title": "Report",
+  "type": "object"
+}

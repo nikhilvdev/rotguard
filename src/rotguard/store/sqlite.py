@@ -65,6 +65,10 @@ class SQLiteStore:
         rows = self._run("SELECT * FROM items WHERE session=? ORDER BY seq", (session,)).fetchall()
         return [{**dict(r), "parents": json.loads(r["parents"])} for r in rows]
 
+    def item(self, session: str, item_id: str) -> dict[str, Any] | None:
+        r = self._run("SELECT * FROM items WHERE session=? AND id=?", (session, item_id)).fetchone()
+        return {**dict(r), "parents": json.loads(r["parents"])} if r else None
+
     def save_snapshot(self, session: str, turn: int, ids: list[str]) -> None:
         self._run(
             "INSERT OR REPLACE INTO snapshots VALUES (?,?,?)", (session, turn, json.dumps(ids))

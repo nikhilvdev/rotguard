@@ -67,6 +67,16 @@
       "default": 0,
       "title": "Turn",
       "type": "integer"
+    },
+    "origin": {
+      "default": "manual",
+      "enum": [
+        "tool",
+        "manual",
+        "extractor"
+      ],
+      "title": "Origin",
+      "type": "string"
     }
   },
   "required": [
