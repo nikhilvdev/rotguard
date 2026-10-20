@@ -18,7 +18,7 @@ from typing import Any, Literal
 from rotguard.ledger import Entry, Ledger
 from rotguard.report import blame as blame_text
 from rotguard.report.html import build
-from rotguard.store import SQLiteStore
+from rotguard.store import Store
 
 MAX_CHARS = 2000
 MAX_HITS = 3
@@ -27,7 +27,7 @@ MAX_HITS = 3
 class RotguardTools:
     """The tool logic as plain methods, so it works and is tested without the MCP package."""
 
-    def __init__(self, store: SQLiteStore, session: str):
+    def __init__(self, store: Store, session: str):
         self.store, self.session = store, session
         self.ledger = Ledger(on_change=lambda e: store.upsert_entry(session, e.model_dump()))
         self.ledger.load([Entry(**e) for e in store.entries(session)])
@@ -43,7 +43,8 @@ class RotguardTools:
         compaction. Give the same `key` as an earlier entry (or its id in `supersedes`) when
         this overrides it."""
         try:
-            return f"recorded {self.ledger.record(kind, text, key=key, supersedes=supersedes).id}"
+            entry = self.ledger.record(kind, text, key=key, supersedes=supersedes, origin="tool")
+            return f"recorded {entry.id}"
         except ValueError as exc:
             return f"not recorded: {exc}"
 
@@ -90,5 +91,5 @@ def make_server(tools: RotguardTools) -> Any:
     return server
 
 
-def serve(store: SQLiteStore, session: str) -> None:
+def serve(store: Store, session: str) -> None:
     make_server(RotguardTools(store, session)).run("stdio")

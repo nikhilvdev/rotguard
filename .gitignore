@@ -228,3 +228,7 @@ CLAUDE.md
 .claude
 graphify-out/
 .agents
+# editor and agent-tool files
+.vscode/
+skills-lock.json
+.agents/

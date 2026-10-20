@@ -23,19 +23,15 @@ def _result_ids(m: Message) -> set[str]:
     return {b.call_id for b in m.blocks if isinstance(b, ToolResultBlock)}
 
 
-def handoff(messages: list[Message], ledger: Ledger, *, keep: int = 4) -> list[Message]:
-    """System messages, a ledger note, then at least the last `keep` other messages.
-
-    The tail is widened backwards until it starts on a user message and holds the tool call for
-    every tool result it contains, because providers reject a result with no call. If the history
-    has no user message before the tail, the tail starts where it is.
-    """
-    system = [m for m in messages if m.role == "system"]
-    body = [m for m in messages if m.role != "system"]
+def tail_start(body: list[Message], keep: int, user_first: bool = True) -> int:
+    """Index where the last `keep` messages of `body` start, widened backwards until the tail
+    holds the tool call for every tool result it contains (providers reject a result with no
+    call) and, with `user_first`, starts on a user message. With no user message before the tail,
+    it starts where it is. Pass `user_first=False` when a user-role message will go in front."""
     start = max(0, len(body) - max(keep, 1))
     while True:
         moved = start
-        while start > 0 and body[start].role != "user":
+        while user_first and start > 0 and body[start].role != "user":
             if any(b.role == "user" for b in body[:start]):
                 start -= 1
             else:
@@ -45,7 +41,38 @@ def handoff(messages: list[Message], ledger: Ledger, *, keep: int = 4) -> list[M
             if _call_ids(body[i]) & needed:
                 start = min(start, i)
         if start == moved:
-            break
+            return start
+
+
+def pinned_closure(body: list[Message], pinned: set[str] | frozenset[str]) -> set[str]:
+    """Ids of the pinned messages plus the tool call or result each one is paired with."""
+    keep = {m.id for m in body if m.id in pinned}
+    calls = {cid: m.id for m in body for cid in _call_ids(m)}
+    results = {cid: m.id for m in body for cid in _result_ids(m)}
+    for m in body:
+        if m.id not in pinned:
+            continue
+        keep |= {calls[c] for c in _result_ids(m) if c in calls}
+        keep |= {results[c] for c in _call_ids(m) if c in results}
+    return keep
+
+
+def handoff(
+    messages: list[Message],
+    ledger: Ledger,
+    *,
+    keep: int = 4,
+    pinned: set[str] | frozenset[str] = frozenset(),
+) -> list[Message]:
+    """System messages, a ledger note, pinned messages, then at least the last `keep` others.
+
+    The tail is widened as in `tail_start`. Pinned messages (and the tool call or result each one
+    is paired with) from before the tail are kept, in order, ahead of it.
+    """
+    system = [m for m in messages if m.role == "system"]
+    body = [m for m in messages if m.role != "system"]
+    start = tail_start(body, keep)
+    kept = pinned_closure(body[:start], pinned)
     text = ledger.render()
     note = (
         [
@@ -59,4 +86,4 @@ def handoff(messages: list[Message], ledger: Ledger, *, keep: int = 4) -> list[M
         if text
         else []
     )
-    return [*system, *note, *body[start:]]
+    return [*system, *note, *[m for m in body[:start] if m.id in kept], *body[start:]]

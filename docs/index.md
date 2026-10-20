@@ -12,7 +12,8 @@ decisions and constraints that must survive, and records where every item in the
 | [Ledger](quickstart.md#the-ledger) | Goals, decisions and constraints with supersession, shown to the model on every call | Free |
 | Provenance, `diff`, `blame` | Where each item came from, and which summaries carry it | Free |
 | [Compaction audit](audit.md) | After a compaction, which facts did the model lose? | About 3 side calls per audit |
-| [Recall checks](recall.md) | Periodically ask the model to restate ledger entries; alert on repeated failures | 1 side call per probe |
+| [Recall checks](recall.md) | Periodically ask pointed questions about the ledger or the conversation; alert on repeated failures | 1 side call per probe |
+| [Policies](policies.md) | Offload large tool outputs, dedup repeats, pin messages, staged cleanup, ledger extractor | Free (summaries cost a call) |
 | [Fresh-context handoff](recall.md#fresh-context-handoff) | Restart the context from the system prompt, the ledger and the last few messages | Free |
 | [CLI and MCP server](cli.md) | HTML reports, replay a saved trace under another model, ledger tools for MCP clients | Replay: side calls |
 
@@ -27,7 +28,7 @@ and the caveats before relying on either.
 
 ## Install
 
-rotguard is not on PyPI yet (the version is `0.0.0`). Install from a clone:
+rotguard is not on PyPI yet (the version in the repo is `0.1.0a1`). Install from a clone:
 
 ```bash
 git clone https://github.com/nikhilvdev/rotguard && cd rotguard

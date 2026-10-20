@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "description": "A stored `audit` event: `AuditReport.to_dict()` plus where and when.",
+  "properties": {
+    "ts": {
+      "title": "Ts",
+      "type": "number"
+    },
+    "kind": {
+      "const": "audit",
+      "title": "Kind",
+      "type": "string"
+    },
+    "channel": {
+      "title": "Channel",
+      "type": "string"
+    },
+    "turn": {
+      "title": "Turn",
+      "type": "integer"
+    },
+    "loss": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Loss"
+    },
+    "facts_total": {
+      "title": "Facts Total",
+      "type": "integer"
+    },
+    "answerable_before": {
+      "title": "Answerable Before",
+      "type": "integer"
+    },
+    "lost": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Lost",
+      "type": "array"
+    },
+    "checked": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Checked",
+      "type": "array"
+    },
+    "loss_all": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Loss All"
+    },
+    "suggestions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Suggestions",
+      "type": "array"
+    },
+    "side_calls": {
+      "title": "Side Calls",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "ts",
+    "kind",
+    "channel",
+    "turn",
+    "loss",
+    "facts_total",
+    "answerable_before",
+    "lost",
+    "checked",
+    "loss_all",
+    "suggestions",
+    "side_calls"
+  ],
+  "title": "AuditEvent",
+  "type": "object"
+}

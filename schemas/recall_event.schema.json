@@ -1,0 +1,89 @@
+{
+  "additionalProperties": false,
+  "description": "A stored `recall` event: `RecallResult.to_dict()` plus the rolling score and the alert.",
+  "properties": {
+    "ts": {
+      "title": "Ts",
+      "type": "number"
+    },
+    "kind": {
+      "const": "recall",
+      "title": "Kind",
+      "type": "string"
+    },
+    "turn": {
+      "title": "Turn",
+      "type": "integer"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Score"
+    },
+    "asked": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Asked",
+      "type": "array"
+    },
+    "missed": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Missed",
+      "type": "array"
+    },
+    "stale": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Stale",
+      "type": "array"
+    },
+    "side_calls": {
+      "title": "Side Calls",
+      "type": "integer"
+    },
+    "rolling": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rolling"
+    },
+    "alert": {
+      "title": "Alert",
+      "type": "boolean"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ts",
+    "kind",
+    "turn",
+    "score",
+    "asked",
+    "missed",
+    "stale",
+    "side_calls",
+    "rolling",
+    "alert",
+    "target"
+  ],
+  "title": "RecallEvent",
+  "type": "object"
+}

@@ -4,7 +4,56 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-- License changed from MIT to the PolyForm Noncommercial License 1.0.0 (`LICENSE`, `pyproject.toml`
+- `refix.md` work, M1 to M4 (code and tests; nothing here has run on a hosted model):
+  - **Recall probe redesign (R1 to R4).** The default probe (`style="cued"`) asks one
+    fill-in-the-blank question per entry instead of one "list everything" question (`style="list"`
+    keeps the old one). `target="auto"` asks about facts from the conversation that the ledger does
+    not cover when the ledger is shown to the model on every call, and about the ledger otherwise;
+    the probed context now includes the injected ledger note and marker, as the model sees them.
+    A session-long `FactPool` keeps conversation facts after their source is compacted away.
+    Answers that give a replaced value are `stale` and count as a miss. The Gate 3 harness now
+    compounds compaction, runs a no-compaction control arm, reports calibrated `pass_at`, per-fact
+    lead and overhead, and compares styles and targets on identical simulations.
+  - **Result (qwen2.5 3B, `holdout`, 30 turns, 1 seed, 9 scenarios).** Recall score before any
+    compaction went from 0.03 (old probe) to 0.82 (cued), meeting the 0.7 bar, and false alarms in
+    control runs whose task passed went from 6 of 6 to 0 of 6. Early warning did **not** follow: the
+    alert came at or after the task failure in 7 of 8 failing runs (median lead -1 turn), with one
+    10-turn lead. The `history` target scored 0 of 510 turns because the oracle ledger covers every
+    planted fact. Gate 3 is still not met. Details in `docs/evaluation.md`.
+  - **Policies (F5, F4a).** `OffloadPolicy` stores large tool outputs and leaves a stub with the same
+    `tool_call_id`, read back with `recall_output`; `DedupPolicy` collapses repeated outputs in the
+    request only; `Session.pin` / `RotguardMiddleware.pin` / `ledger_record(pin=True)` keep a message
+    through cleanup and re-attach it if another tool compacted it away; `StagedCleanup` clears old
+    tool outputs first and summarizes only if still over budget (stage 2 turns itself off when another
+    summarizer is active); `RecallPolicy(action="compact")` runs it once on an alert. A tail that
+    must start on a user message is no longer required when a summary leads (a pure tool loop could
+    never be summarized before). `TokenCounter` uses a provider's counting API when given one and
+    otherwise estimates characters / 4 and says so.
+  - **Ledger extractor (F1x).** `LedgerExtractor` proposes entries from each reply; an entry must
+    share a distinctive token with the conversation, `confirm` can veto it, and entries carry
+    `origin` (`tool`, `manual`, `extractor`).
+  - **Architecture (A1 to A3).** Every stored event is also emitted as an OpenTelemetry span event
+    when `rotguard[otel]` is installed (text excluded unless `telemetry.configure(include_text=True)`);
+    a `Store` protocol with `open_store`; JSON schemas for the report and the stored `audit` and
+    `recall` events, validated against the real producers.
+  - **Evaluation tooling (E1, E2, E7, E8).** Eval clients count calls and tokens by purpose
+    (provider-reported where available) and every entry point has `--estimate`; baselines
+    `lc-summarize`, `anthropic-compaction` and `rg-staged`; stale-decision rate per result;
+    `assert_history_integrity`; a nightly workflow and `evals/nightly.py`. `anthropic-compaction`
+    was written from the SDK's type definitions and tested against a fake client, **not the live
+    API**. ContextForge is not wired in.
+  - Tests: 158 pass (99 before), ruff and strict mypy clean.
+
+- License changed again, to a dual license: GNU AGPL-3.0 (`AGPL-3.0-only`, the full text in
+  `LICENSE`) for everyone, plus a commercial license from the author for those who can't or won't
+  comply with the AGPL. This replaces the PolyForm Noncommercial license below, which kept company
+  teams from even trying the audit in CI. Copies obtained under MIT or PolyForm keep those terms.
+  `CONTRIBUTING.md` now says contributions may be offered under both.
+- Housekeeping: `ruff format --check` added to CI; `.vscode/` and `skills-lock.json` are no longer
+  tracked; references to the private plan file replaced; package metadata (URLs, keywords,
+  classifiers) and a tag-triggered release workflow added in preparation for a first PyPI alpha.
+
+- (Superseded by the entry above.) License changed from MIT to the PolyForm Noncommercial License 1.0.0 (`LICENSE`, `pyproject.toml`
   SPDX metadata, README, CONTRIBUTING). Noncommercial use is free; commercial use needs a separate
   license. This is a source-available license, not an OSI open source one. Copies already obtained
   under MIT keep MIT.
@@ -61,7 +110,7 @@ All notable changes to this project are documented in this file.
     Phase 3; the new ones cover recall, signals, the marker, all four adapters and the Gate 3
     summary); ruff, ruff format and strict mypy are clean. All tests use fake models. The Agents
     SDK wrapper is tested against a fake session, not the real SDK. Gate 3 on a real model: see
-    `rotguard.md` 10.2.
+    the Gate 3 entry below and `docs/evaluation.md`.
   - Gate 3, first run (qwen2.5 3B, `holdout`, 30 turns, 1 seed, 9 scenarios): not met. The recall
     score before any compaction averaged 0.11, so the alert fired at turn 1 in 8 of 9 runs; 3 of 9
     task probes failed before any compaction. The probe is not usable on this model as it stands,

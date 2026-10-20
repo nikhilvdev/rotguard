@@ -8,6 +8,7 @@ from langchain.agents.middleware import ContextEditingMiddleware, SummarizationM
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from test_audit import cued_answer
 
 from rotguard.adapters.langchain import (
     RotguardMiddleware,
@@ -254,6 +255,7 @@ class QuizChat(FakeChat):
     extract: list[Any] = []
     qa: dict[str, str] = {}
     ledger_answers: list[str] = []
+    sources: list[str] = []
 
     def _generate(self, messages, stop=None, run_manager=None, **kw):
         last = messages[-1].content if isinstance(messages[-1].content, str) else ""
@@ -274,6 +276,8 @@ class QuizChat(FakeChat):
                     continue
                 if m.group(2).startswith("List every goal"):
                     ans = "; ".join(a for a in self.ledger_answers if a in text) or "unknown"
+                elif (cued := cued_answer(m.group(2), text, self.sources)) is not None:
+                    ans = cued
                 else:
                     a = self.qa[m.group(2)]
                     ans = a if a in text else "unknown"
@@ -371,8 +375,9 @@ def test_audit_error_is_recorded_not_raised():
 
 
 def recall_agent(recall, on_alert=None):
-    model = QuizChat(ledger_answers=["staging_orders"])
-    rg = RotguardMiddleware(recall=recall, on_alert=on_alert)
+    model = QuizChat(ledger_answers=["staging_orders"], sources=["Only write to staging_orders."])
+    # the ledger is not injected: with it in front of the model a probe could always answer
+    rg = RotguardMiddleware(recall=recall, on_alert=on_alert, inject_ledger=False)
     rg.ledger.record("constraint", "Only write to staging_orders.", key="table")
     sm = SummarizationMiddleware(
         model=lossy_summarizer(), trigger=("messages", 5), keep=("messages", 2)
@@ -410,8 +415,8 @@ def test_marker_miss_forces_a_probe_ahead_of_schedule():
 
 def unrecallable_agent(policy):
     """No summarizer, and a ledger entry the chat never mentions: every probe fails, history grows."""
-    model = QuizChat(ledger_answers=["region_zz9"])
-    rg = RotguardMiddleware(recall=policy)
+    model = QuizChat(ledger_answers=["region_zz9"], sources=["Deploy region is region_zz9."])
+    rg = RotguardMiddleware(recall=policy, inject_ledger=False)
     rg.ledger.record("constraint", "Deploy region is region_zz9.")
     return create_agent(model=model, tools=[], middleware=[rg]), rg, model
 

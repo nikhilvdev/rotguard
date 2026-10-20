@@ -36,7 +36,8 @@ of 27 probes, so its result (AUC 0.63) says little.
 ## Recall checks (Gate 3)
 
 The question: do recall probes fail at least one turn **before** the task does, without too many
-false alarms? **The first run does not answer it.**
+false alarms? **The first run could not answer it; the second, after a redesign, answers it with
+"not on this model".**
 
 qwen2.5 3B, `holdout` suite, 30 turns, 1 seed, 9 scenarios, `pass_at` 0.5, alert after 2 failed
 probes:
@@ -53,10 +54,50 @@ The 3B model fails the recall probe even when the constraint is still in its con
 is effectively always on and the measured "lead" is not evidence of early warning. Calibration only
 lowers `pass_at` to its floor of 0.3, which does not fix a model that cannot answer the probe.
 
-**Open:** why the clean-context score is so low (probe wording, grading or the model), and a run on
-a hosted Anthropic and OpenAI model. Until then, use recall checks to log and experiment, not to
-trigger actions you cannot undo. In particular, be careful with `action="handoff"`, which rewrites
-history.
+### After the probe redesign
+
+The low clean-context score came from the probe, not only the model. The old probe asked one open
+question ("list every goal, decision and constraint") and graded every entry against that one
+answer. The redesigned probe (`style="cued"`, now the default) asks one fill-in-the-blank question
+per entry, in the same single side call. The harness was also reworked: compaction now compounds (the
+next summary covers the previous one), every scenario also runs a **control arm** with no
+compaction, and the old and new probe styles are scored on identical simulations.
+
+qwen2.5 3B, `holdout` suite, 30 turns, 1 seed, 9 scenarios, `pass_at` 0.5, alert after 2 failed
+probes, ledger entries as the target (one run per cell, so treat it as indicative):
+
+| Measure | Old `list` probe | New `cued` probe |
+| --- | --- | --- |
+| Recall score before any compaction (the bar was at least 0.7) | **0.03** (291 probes) | **0.82** (291 probes) |
+| Alert fired in a control run whose task passed (false alarm) | 6 of 6 | **0 of 6** |
+| Task failed after compaction | 8 of 9 | 8 of 9 |
+| Alert at least one turn before the task failed | 4 of 8 | **1 of 8** |
+| Median lead over the failure, turns (negative is late) | 3 | **-1** |
+
+The probe now works on clean contexts, and it no longer raises alarms where nothing went wrong.
+**It does not warn early.** In the four planted-fact scenarios the task failed at turns 5, 4, 8 and
+4, and the cued alert came at turns 8, 5, 9 and never: on the same turn as the failure or later. The
+one clear early warning was an `aim` scenario (alert at turn 5, failure at turn 15). The old
+probe's four "early" alerts were its always-on behaviour, not a signal. Three more scenarios fail the
+task even with no compaction; the probe fails there too, which is correct, so they are not false
+alarms.
+
+Cost, from the same run: probes asked every turn, with two variants asking questions side by side
+(510 probe calls each; the third variant had nothing to ask). Side-call tokens came to 201% of the
+agent's own. That is a worst case on purpose, not a setting anyone should run: with one variant it
+would be roughly half of that (about 100%), and the default is one probe every 5 turns. 1,587 calls and about
+10.5 million input tokens in total.
+
+**What this does not show.** Only one model of 3B parameters, one seed and nine scenarios. The
+`history` target (facts from the conversation that the ledger does not cover) **could not be
+evaluated**: in this harness the oracle ledger holds every planted fact, so there was nothing left to
+ask about (0 of 510 turns scored). No hosted Anthropic or OpenAI model has been run.
+
+**Open:** why the alert lags the failure (two consecutive misses are required, and the first miss
+often comes on the same turn as the task failure), whether `alert_after=1` buys lead at the cost of
+false alarms, and a run on hosted models. Until then, use recall checks to log and experiment, not to
+trigger actions you cannot undo. In particular, be careful with `action="handoff"` and
+`action="compact"`, which rewrite history.
 
 ## Run it yourself
 

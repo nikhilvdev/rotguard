@@ -1,15 +1,33 @@
 [project]
 name = "rotguard"
-version = "0.0.0"
+version = "0.1.0a1"
 description = "Measure and guard against context rot in LLM agents (context rot, compaction, LangChain)."
 readme = "README.md"
-license = "PolyForm-Noncommercial-1.0.0"
+license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
+authors = [{ name = "Nikhil Arora" }]
+keywords = ["context rot", "langchain", "llm agents", "compaction", "context engineering"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
 requires-python = ">=3.10"
 dependencies = [
     "logquill>=1.0.0",
     "pydantic>=2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/nikhilvdev/rotguard"
+Documentation = "https://github.com/nikhilvdev/rotguard/tree/main/docs"
+Issues = "https://github.com/nikhilvdev/rotguard/issues"
+Changelog = "https://github.com/nikhilvdev/rotguard/blob/main/CHANGELOG.md"
 
 [project.scripts]
 rotguard = "rotguard.cli.main:main"
@@ -19,6 +37,7 @@ langchain = ["langchain>=1.0"]
 anthropic = ["anthropic"]
 openai = ["openai"]
 mcp = ["mcp>=2"]
+otel = ["opentelemetry-api"]
 eval = ["anthropic", "openai"]
 
 [dependency-groups]
@@ -29,6 +48,7 @@ dev = [
     "ruff>=0.17.0",
     "mypy>=2.4.0",
     "pre-commit>=4.6.2",
+    "opentelemetry-sdk",
 ]
 docs = ["mkdocs-material"]
 

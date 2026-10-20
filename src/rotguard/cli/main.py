@@ -17,16 +17,16 @@ from rotguard.probes import AuditPolicy, RecallPolicy
 from rotguard.replay import replay
 from rotguard.report import blame
 from rotguard.report.html import build, render_html
-from rotguard.store import SQLiteStore
+from rotguard.store import SQLiteStore, Store
 
 
-def _store(path: str) -> SQLiteStore:
+def _store(path: str) -> Store:
     if path != ":memory:" and not Path(path).exists():
         raise SystemExit(f"rotguard: no such database: {path}")
     return SQLiteStore(path)
 
 
-def _session(store: SQLiteStore, wanted: str | None) -> str:
+def _session(store: Store, wanted: str | None) -> str:
     ids = store.sessions()
     if wanted:
         if wanted not in ids:

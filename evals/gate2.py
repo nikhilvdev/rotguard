@@ -20,7 +20,7 @@ from rotguard.core import Message, Provenance, TextBlock
 from rotguard.probes import run_audit
 
 from .core import STRATEGIES, SYSTEM, score
-from .models import Client, make_client
+from .models import Client, make_client, print_estimate, purpose
 from .suites import ALL_SUITES, SUITES
 
 KEEP = 6  # messages the summarizer keeps verbatim (core.summarize default)
@@ -42,14 +42,15 @@ def neutral(history: list[dict], prefix: str) -> list[Message]:
 
 
 class HarnessCaller:
-    def __init__(self, client: Client):
-        self.client = client
+    def __init__(self, client: Client, purpose_name: str = "audit"):
+        self.client, self.purpose_name = client, purpose_name
 
     def ask(self, context: list[Message], question: str) -> str:
         msgs = [{"role": m.role, "content": m.text} for m in context]
-        return self.client.complete(
-            SYSTEM, [*msgs, {"role": "user", "content": question}], max_tokens=500
-        )
+        with purpose(self.client, self.purpose_name):
+            return self.client.complete(
+                SYSTEM, [*msgs, {"role": "user", "content": question}], max_tokens=500
+            )
 
 
 @dataclass
@@ -90,11 +91,18 @@ def permutation_p(
     return hits / n
 
 
-def run(client: Client, turns: int, seeds: int, suites: list[str], cloze: int = 0) -> list[Row]:
+def run(
+    client: Client,
+    turns: int,
+    seeds: int,
+    suites: list[str],
+    cloze: int = 0,
+    limit: int | None = None,
+) -> list[Row]:
     rows = []
     for name in suites:
         for seed in range(seeds):
-            for sc in ALL_SUITES[name](seed=seed, turns=turns):
+            for sc in ALL_SUITES[name](seed=seed, turns=turns)[:limit]:
                 new_hist = STRATEGIES["summarize"](sc.history, client)
                 reply = client.complete(
                     SYSTEM, [*new_hist, {"role": "user", "content": sc.probe.question}]
@@ -166,11 +174,20 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--suites", default="all")
     ap.add_argument("--cloze", type=int, default=0, help="fallback facts built from the text")
     ap.add_argument("--out", default="evals/results")
+    ap.add_argument(
+        "--estimate",
+        action="store_true",
+        help="dry run on the mock model: count calls, spend nothing",
+    )
     a = ap.parse_args(argv)
-    client = make_client(a.model)
+    client = make_client("mock" if a.estimate else a.model)
     suites = list(SUITES) if a.suites == "all" else a.suites.split(",")
     rows = run(client, a.turns, a.seeds, suites, a.cloze)
+    if a.estimate:
+        print_estimate(client, f"gate2 {a.model}, suites={suites}, seeds={a.seeds}")
+        return
     summary = summarize_rows(rows)
+    summary["usage"] = client.totals()
     print(json.dumps(summary, indent=2))
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)

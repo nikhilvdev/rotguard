@@ -32,9 +32,22 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from rotguard.core import Message, Provenance, TextBlock, ToolCallBlock, ToolResultBlock
 from rotguard.ledger import Entry, Ledger
 from rotguard.log import get_logger
-from rotguard.probes import AuditPolicy, RecallPolicy, RecallResult
+from rotguard.policies import DedupPolicy, OffloadPolicy, StagedCleanup
+from rotguard.policies.dedup import find_duplicates
+from rotguard.policies.dedup import stub as dedup_stub
+from rotguard.policies.offload import (
+    OFFLOADED,
+    make_stub,
+    needs_offload,
+    offload_id,
+    read_page,
+    store_output,
+)
+from rotguard.policies.staged import SUMMARY_ID_PREFIX, run_staged
+from rotguard.probes import AuditPolicy, LedgerExtractor, RecallPolicy, RecallResult
 from rotguard.session import Session
-from rotguard.store import SQLiteStore
+from rotguard.store import Store, open_store
+from rotguard.tokens import TokenCounter
 
 log = get_logger(__name__)
 
@@ -167,7 +180,10 @@ class LangChainCaller:
 
 
 def make_ledger_tool(
-    ledger: Ledger, get_turn: Callable[[], int], get_source: Callable[[], str | None]
+    ledger: Ledger,
+    get_turn: Callable[[], int],
+    get_source: Callable[[], str | None],
+    on_pin: Callable[[str], None] | None = None,
 ) -> Any:
     """The `ledger_record` tool an agent calls to keep a goal, decision or constraint alive."""
 
@@ -177,10 +193,12 @@ def make_ledger_tool(
         text: str,
         key: str | None = None,
         supersedes: str | None = None,
+        pin: bool = False,
     ) -> str:
         """Record a goal, decision, constraint or open question so it survives context
         compaction. Give the same `key` as an earlier entry (or its id in `supersedes`) when
-        this overrides it."""
+        this overrides it. Set `pin` to also keep the message that recorded it word for word
+        through cleanup."""
         try:
             e = ledger.record(
                 kind,
@@ -189,12 +207,49 @@ def make_ledger_tool(
                 supersedes=supersedes,
                 source_message_id=get_source(),
                 turn=get_turn(),
+                origin="tool",
             )
         except ValueError as exc:
             return f"not recorded: {exc}"
+        if pin and on_pin and (src := get_source()):
+            on_pin(src)
         return f"recorded {e.id}"
 
     return ledger_record
+
+
+def make_recall_output_tool(store: Store, session_id: str) -> Any:
+    """The `recall_output` tool: read a tool output that was offloaded, in pages."""
+
+    @tool("recall_output")
+    def recall_output(id: str, start_line: int = 0, max_lines: int = 200) -> str:
+        """Read a tool output that was moved out of the context to keep it small. Pass the id from
+        the stub that replaced it, and page through long outputs with `start_line`."""
+        row = store.item(session_id, id)
+        if row is None or row["kind"] != OFFLOADED:
+            return f"no offloaded output with id {id!r}"
+        return read_page(row["text"], start_line, max_lines)
+
+    return recall_output
+
+
+def model_summarizer(model: Any) -> Callable[[list[Message]], str]:
+    """A `StagedCleanup.summarizer` that asks a chat model to summarize the messages."""
+
+    def summarize(messages: list[Message]) -> str:
+        transcript = "\n".join(f"{m.role}: {m.text[:2000]}" for m in messages)
+        reply = model.invoke(
+            [
+                HumanMessage(
+                    content="Summarize this agent transcript so the work can continue from the "
+                    "summary alone. Keep goals, decisions, constraints, names, numbers and "
+                    "identifiers.\n\n<transcript>\n" + transcript + "\n</transcript>"
+                )
+            ]
+        )
+        return str(reply.text)
+
+    return summarize
 
 
 class RotguardMiddleware(AgentMiddleware):
@@ -209,30 +264,52 @@ class RotguardMiddleware(AgentMiddleware):
 
     def __init__(
         self,
-        store: SQLiteStore | str | None = None,
+        store: Store | str | None = None,
         session_id: str | None = None,
         inject_ledger: bool = True,
         ledger_tool: bool = True,
         audit: AuditPolicy | None = None,
         recall: RecallPolicy | None = None,
         on_alert: Callable[[RecallResult], None] | None = None,
+        offload: OffloadPolicy | None = None,
+        dedup: DedupPolicy | None = None,
+        staged: StagedCleanup | None = None,
+        counter: TokenCounter | None = None,
+        extract: LedgerExtractor | None = None,
     ):
         super().__init__()
-        self.store = store if isinstance(store, SQLiteStore) else SQLiteStore(store or ":memory:")
+        self.store = open_store(store)
         self.session_id = session_id or uuid.uuid4().hex
         self.inject_ledger = inject_ledger
         self.ledger = Ledger(on_change=self._save_entry)
         self.session = Session(self.store, self.session_id, self.ledger, audit, recall, on_alert)
         self._last_assistant_id: str | None = None
-        self.tools = (
+        self.offload, self.dedup, self.staged, self.extract = offload, dedup, staged, extract
+        self.counter = counter or TokenCounter()
+        self._warned: set[str] = set()
+        self.tools: list[Any] = (
             [
                 make_ledger_tool(
-                    self.ledger, lambda: self.session.turn, lambda: self._last_assistant_id
+                    self.ledger,
+                    lambda: self.session.turn,
+                    lambda: self._last_assistant_id,
+                    self.session.pin,
                 )
             ]
             if ledger_tool
             else []
         )
+        if offload or staged:  # both leave stubs that point at recall_output
+            self.tools.append(make_recall_output_tool(self.store, self.session_id))
+
+    def pin(self, message_id: str) -> None:
+        """Keep this message through offload, dedup, staged cleanup and handoff."""
+        self.session.pin(message_id)
+
+    def _warn_once(self, key: str, msg: str) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            _warn(hook=key, error=msg)
 
     @_failopen
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -245,8 +322,10 @@ class RotguardMiddleware(AgentMiddleware):
         self.session.turn += 1
         neutral = to_neutral_list(state["messages"])
         self.session.observe_history(neutral)
-        fresh = self.session.take_handoff(neutral)
-        if fresh is not None:  # RecallPolicy(action="handoff") and an alert fired
+        fresh = self.session.take_handoff(neutral)  # RecallPolicy(action="handoff") and an alert
+        if fresh is None:
+            fresh = self._staged_cleanup(neutral)
+        if fresh is not None:
             return {
                 "messages": [
                     RemoveMessage(id=REMOVE_ALL_MESSAGES),
@@ -255,20 +334,162 @@ class RotguardMiddleware(AgentMiddleware):
             }
         return None
 
+    def _staged_cleanup(self, neutral: list[Message]) -> list[Message] | None:
+        """F5d, and `action="compact"`: the cleaned message list, or None to leave things alone."""
+        forced = self.session.compact_pending
+        self.session.compact_pending = False  # one-shot, like the alert that asked for it
+        if self.staged is None:
+            if forced:
+                self._warn_once("compact", 'action="compact" needs a StagedCleanup; logging only')
+            return None
+        # Another summarizer is active (SummarizationMiddleware, Anthropic compaction): two
+        # summarizers would fight over the same history, so only stage 1 runs.
+        other = any(
+            m.provenance
+            and m.provenance.kind == "summary"
+            and not m.id.startswith(SUMMARY_ID_PREFIX)
+            for m in neutral
+        )
+        if other:
+            self._warn_once("staged", "another summarizer is active: staged cleanup stage 2 is off")
+        res = run_staged(
+            neutral,
+            self.staged,
+            self.counter,
+            self.session.pinned,
+            force=forced,
+            allow_summary=not other,
+        )
+        if res is None:
+            return None
+        for o in res.offloaded:
+            store_output(
+                self.store,
+                self.session_id,
+                o.item_id,
+                o.text,
+                turn=self.session.turn,
+                tool_name=o.tool_name,
+                call_id=o.call_id,
+            )
+        self.session.event(
+            "staged",
+            {
+                "turn": self.session.turn,
+                "stages": res.stages,
+                "cleared": res.cleared,
+                "summarized": res.summarized,
+                "tokens_before": res.tokens_before,
+                "tokens_after": res.tokens_after,
+                "tokens_estimated": self.counter.estimated,
+                "forced": forced,
+            },
+        )
+        return res.messages
+
+    def _offload(self, request: Any, result: Any) -> Any:
+        """F5a: store a large tool output and return a stub with the same tool_call_id."""
+        if (
+            self.offload is None
+            or not isinstance(result, ToolMessage)
+            or not isinstance(result.content, str)
+            or not needs_offload(result.content, self.offload)
+        ):
+            return result
+        call = request.tool_call
+        item_id = offload_id(result.tool_call_id)
+        store_output(
+            self.store,
+            self.session_id,
+            item_id,
+            result.content,
+            turn=self.session.turn,
+            tool_name=call.get("name"),
+            call_id=result.tool_call_id,
+        )
+        return result.model_copy(
+            update={"content": make_stub(item_id, result.content, self.offload)}
+        )
+
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        result = handler(request)
+        try:
+            return self._offload(request, result)
+        except Exception as exc:
+            _warn(hook="wrap_tool_call", error=repr(exc))
+            return result
+
+    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
+        result = await handler(request)
+        try:
+            return self._offload(request, result)
+        except Exception as exc:
+            _warn(hook="awrap_tool_call", error=repr(exc))
+            return result
+
+    def _dedup(self, messages: list[Any]) -> list[Any]:
+        """F5b, for this call only: later copies of an identical tool output become a pointer."""
+        if self.dedup is None:
+            return messages
+        outs = [
+            (
+                m.id or f"#{i}",
+                m.content if isinstance(m, ToolMessage) and isinstance(m.content, str) else None,
+            )
+            for i, m in enumerate(messages)
+        ]
+        dups = find_duplicates(outs, self.dedup, self.session.pinned)
+        return [
+            m.model_copy(update={"content": dedup_stub(dups[i])}) if i in dups else m
+            for i, m in enumerate(messages)
+        ]
+
+    def _pinned_note(self, messages: list[Any]) -> str:
+        """Pinned messages another tool compacted out of this request, for this call only."""
+        present = {m.id for m in messages}
+        parts = []
+        for pid in sorted(self.session.pinned - present):
+            row = self.store.item(self.session_id, pid)
+            if row and row["kind"] != OFFLOADED:
+                parts.append(f"[rotguard pinned message {pid} ({row['kind']})]:\n{row['text']}")
+        return "\n".join(parts)
+
+    def _extract_entries(self, messages: list[Any]) -> None:
+        """F1x: propose ledger entries from the last user message and the reply just given."""
+        if self.extract is None or not self.extract.due(self.session.turn):
+            return
+        try:
+            last_user = next(m for m in reversed(messages[:-1]) if isinstance(m, HumanMessage))
+            self.extract.run(
+                to_neutral_list([last_user, messages[-1]]),
+                self.ledger,
+                turn=self.session.turn,
+                source_message_id=messages[-1].id,
+            )
+        except StopIteration:
+            return
+        except Exception as exc:  # an extractor must never break the agent
+            _warn(hook="extract", error=repr(exc))
+
     def _save_entry(self, entry: Entry) -> None:
         self.store.upsert_entry(self.session_id, entry.model_dump())
 
     def _prepare(self, request: Any) -> Any:
         try:
-            self.session.observe_request(to_neutral_list(request.messages))
+            messages = self._dedup(list(request.messages))
+            self.session.observe_request(to_neutral_list(messages))
             text = self.ledger.render() if self.inject_ledger else ""
+            parts = (text, self.session.marker_note(), self._pinned_note(messages))
+            shown = "\n".join(t for t in parts if t)
             self.session.run_pending(
-                LangChainCaller(request.model, request.tools, request.system_message), text
+                LangChainCaller(request.model, request.tools, request.system_message), text, shown
             )
-            shown = "\n".join(t for t in (text, self.session.marker_note()) if t)
+            changed = any(a is not b for a, b in zip(messages, request.messages, strict=True))
             if shown:
                 note = HumanMessage(content=shown, name=LEDGER_MESSAGE_NAME)
-                return request.override(messages=[*request.messages, note])
+                return request.override(messages=[*messages, note])
+            if changed:
+                return request.override(messages=messages)
         except Exception as exc:
             _warn(hook="wrap_model_call", error=repr(exc))
         return request
@@ -285,6 +506,7 @@ class RotguardMiddleware(AgentMiddleware):
         if isinstance(last, AIMessage):
             self._last_assistant_id = last.id
             self.session.observe_reply(last.text)
+            self._extract_entries(state["messages"])
         return None
 
     @_failopen

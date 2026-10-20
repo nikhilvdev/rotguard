@@ -1,0 +1,41 @@
+name: Nightly eval
+
+# A small fixed eval (one scenario per suite, one seed) on a cheap hosted model. It catches a
+# break in goal retention or audit validity, not a small drift. It costs money on every run.
+# Setup: add a repository secret ANTHROPIC_API_KEY. To record the first baseline, run this
+# workflow by hand with "write_baseline" set, then commit evals/nightly_baseline.json.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      write_baseline:
+        description: "Record today's numbers as the baseline instead of comparing"
+        type: boolean
+        default: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+
+      - run: uv python install 3.12
+
+      - run: uv sync --python 3.12 --extra langchain --extra anthropic --extra eval
+
+      - name: Run the nightly eval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >-
+          uv run python -m evals.nightly --model anthropic:claude-haiku-5-5 --out nightly-results
+          ${{ inputs.write_baseline && '--write-baseline' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-results
+          path: nightly-results/

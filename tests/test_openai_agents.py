@@ -82,6 +82,7 @@ def test_audit_and_recall_see_a_trim_done_by_the_inner_session():
         [{"question": "Which table may be written to?", "answer": "staging_orders"}],
         {"Which table may be written to?": "staging_orders"},
         ["staging_orders"],
+        ["Only write to staging_orders."],
     )
     client = FakeClient(caller)
     s = RotguardSession(

@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("anthropic")
 
 from anthropic.types.beta import BetaCompactionBlock, BetaTextBlock  # noqa: E402
+from test_audit import cued_answer  # noqa: E402
 
 from rotguard.adapters.anthropic import RotguardAnthropic, to_neutral
 from rotguard.probes import AuditPolicy
@@ -29,8 +30,9 @@ def flat(content):
 class FakeClient:
     """Stands in for anthropic.Anthropic(): knows only what is in the context a call carries."""
 
-    def __init__(self, answers, ledger_answers=()):
+    def __init__(self, answers, ledger_answers=(), sources=()):
         self.answers, self.calls, self.ledger_answers = answers, [], list(ledger_answers)
+        self.sources = list(sources)
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
 
     def create(self, **kw):
@@ -45,6 +47,8 @@ class FakeClient:
                 if m and m.group(2).startswith("List every goal"):
                     known = [a for a in self.ledger_answers if a in text]
                     lines.append(f"{m.group(1)}. " + ("; ".join(known) or "unknown"))
+                elif m and (cued := cued_answer(m.group(2), text, self.sources)) is not None:
+                    lines.append(f"{m.group(1)}. {cued}")
                 elif m and m.group(2) in self.answers:
                     a = self.answers[m.group(2)]
                     lines.append(f"{m.group(1)}. {a if a in text else 'unknown'}")
@@ -111,7 +115,11 @@ def test_ids_are_stable_across_requests_even_for_repeated_messages():
 
 
 def run_conversation(audit, recall=None, on_alert=None):
-    client = FakeClient({"Which table may be written to?": "staging_orders"}, ["staging_orders"])
+    client = FakeClient(
+        {"Which table may be written to?": "staging_orders"},
+        ["staging_orders"],
+        ["Only write to staging_orders."],
+    )
     rg = RotguardAnthropic(client, audit=audit, recall=recall, on_alert=on_alert)
     if recall:
         rg.ledger.record("constraint", "Only write to staging_orders.")
@@ -201,7 +209,6 @@ def test_recall_probe_sees_the_constraint_until_compaction_drops_it():
     probes = [
         c
         for c in client.calls
-        if "restate" in flat(c["messages"][-1]["content"])
-        or "List every goal" in flat(c["messages"][-1]["content"])
+        if "Complete the constraint currently in effect" in flat(c["messages"][-1]["content"])
     ]
     assert len(probes) == 2 and all(c["tools"] == TOOLS and c["betas"] == BETAS for c in probes)

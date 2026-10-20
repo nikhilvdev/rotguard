@@ -73,7 +73,7 @@ def test_recall_needs_a_model_and_probes_each_pass_through_the_node():
 
     from rotguard.probes import RecallPolicy
 
-    policy = RecallPolicy(mode="every", every=1, signals=False, background=False)
+    policy = RecallPolicy(mode="every", every=1, signals=False, background=False, target="ledger")
     with pytest.raises(ValueError, match="recall probes"):
         RotguardGraph(recall=policy)
     model = FakeChat()

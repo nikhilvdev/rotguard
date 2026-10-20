@@ -24,16 +24,41 @@ def msg(i, text, role="user", kind=None):
     )
 
 
+def cued_answer(question, text, sources=()):
+    """Answer a cued recall question the way a model that kept the facts would, else "unknown".
+
+    `sources` are texts the model once saw (ledger entries): one counts as remembered only when its
+    answer is still in `text`, the context the model is given now. Lines of `text` itself are
+    always usable. Returns None when `question` is not a cued question.
+    """
+    if question.startswith("What is the current goal"):
+        return next(
+            (s for s in sources if all(t in text.lower() for t in fact_tokens(s)[0])), "unknown"
+        )
+    m = re.match(
+        r"Complete the (?:statement from the conversation|\w+ currently in effect): (.*)$", question
+    )
+    if not m:
+        return None
+    pre, _, post = m.group(1).partition("____")
+    for src in [*sources, *text.splitlines()]:
+        hit = re.search(re.escape(pre) + r"(\S+?)" + re.escape(post), src, re.I)
+        if hit and norm(hit.group(1)) in norm(text):
+            return hit.group(1)
+    return "unknown"
+
+
 class FakeCaller:
     """Answers a question only if the fact's answer is literally in the context it was given."""
 
-    def __init__(self, extract, qa, ledger_answers=()):
+    def __init__(self, extract, qa, ledger_answers=(), sources=()):
         self.extract, self.qa, self.ledger_answers, self.calls = (
             extract,
             qa,
             list(ledger_answers),
             [],
         )
+        self.sources = list(sources)
 
     def ask(self, context, question):
         self.calls.append((len(context), question))
@@ -48,6 +73,8 @@ class FakeCaller:
             if q.startswith("List every goal"):
                 known = [a for a in self.ledger_answers if a in text]
                 lines.append(f"{n}. " + ("; ".join(known) or "unknown"))
+            elif (cued := cued_answer(q, text, self.sources)) is not None:
+                lines.append(f"{n}. {cued}")
             else:
                 ans = self.qa[q]
                 lines.append(f"{n}. " + (ans if ans in text else "unknown"))
