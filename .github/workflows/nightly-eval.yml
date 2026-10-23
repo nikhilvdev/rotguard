@@ -34,7 +34,7 @@ jobs:
           uv run python -m evals.nightly --model anthropic:claude-haiku-5-5 --out nightly-results
           ${{ inputs.write_baseline && '--write-baseline' || '' }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: nightly-results
